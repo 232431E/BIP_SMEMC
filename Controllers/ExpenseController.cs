@@ -12,11 +12,14 @@ namespace BIP_SMEMC.Controllers
     {
         private readonly Supabase.Client _supabase;
         private readonly FinanceService _financeService;
+        private readonly DebtService _debtService;
+
         private int _skippedEmptyCount = 0;
-        public ExpenseController(Supabase.Client supabase, FinanceService financeService)
+        public ExpenseController(Supabase.Client supabase, FinanceService financeService, DebtService debtService)
         {
             _supabase = supabase;
             _financeService = financeService;
+            _debtService =  debtService;
         }
         public async Task<IActionResult> Index()
         {
@@ -204,11 +207,15 @@ namespace BIP_SMEMC.Controllers
                         var glSheet = workbook.Worksheets.FirstOrDefault(w => w.Name.ToUpper().Contains("GL") || w.Name.ToUpper().Contains("LEDGER"));
                         if (glSheet != null)
                         {
-                            // 1. Process Transactions
+                            // A. Process Transactions (Existing)
                             await ProcessGLTransactions(glSheet, userEmail, masterCategoryCache);
 
-                            // 2. Process Payroll (Only call the C# version, REMOVE the RPC call)
+                            // B. Process Payroll (Existing)
                             await SyncEmployeesAndPayroll(userEmail, masterCategoryCache);
+
+                            // C. PROCESS DEBT (NEW)
+                            // This ensures that immediately after transactions are in, we check for loans
+                            await _debtService.SyncDebtsFromTransactions(userEmail);
                         }
                     }
                 }
@@ -511,7 +518,9 @@ namespace BIP_SMEMC.Controllers
                         string empUuid = validEmployees[name];
 
                         // Logic: Reverse calculate Gross from Net (Debit)
-                        decimal netPay = t.Debit;
+                        decimal netPay = t.Debit + t.Credit;
+                        if (netPay == 0) continue;
+
                         decimal estimatedGross = netPay / 0.8m;
                         decimal cpfAmt = estimatedGross - netPay;
 
@@ -522,11 +531,13 @@ namespace BIP_SMEMC.Controllers
                             EmployeeId = empUuid,
                             TransId = t.Id ?? 0,
                             NetPay = netPay,
-                            GrossSalary = estimatedGross,
-                            CpfAmount = cpfAmt,
-                            BaseSalary = estimatedGross,
+                            GrossSalary = Math.Round(estimatedGross, 2),
+                            CpfAmount = Math.Round(cpfAmt, 2),
+                            BaseSalary = Math.Round(estimatedGross, 2),
                             SalaryMonth = t.Date.Month,
-                            SalaryYear = t.Date.Year
+                            SalaryYear = t.Date.Year,
+                            OtHours = 0,
+                            OvertimePay = 0
                         });
                     }
                 }

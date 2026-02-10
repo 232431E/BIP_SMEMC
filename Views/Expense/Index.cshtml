@@ -129,6 +129,7 @@
 
         // Debug: Check Month Distribution in JS
         console.log(`[INIT] Loaded ${allTransactions.length} transactions.`);
+        console.groupEnd();
 
         // 2. FIND DATE BOUNDARIES (The "Anchor")
         // This ensures the chart works for historical data (e.g. 2023) without needing to be "Today"
@@ -156,15 +157,18 @@
             const cutoffDate = new Date(maxDate);
             cutoffDate.setMonth(maxDate.getMonth() - months);
 
-            // Filter
+            // Filter by Date Range
             const filteredData = allTransactions.filter(t => {
                 const tDate = new Date(t.date);
                 return tDate >= cutoffDate && tDate <= maxDate;
             });
-            
-            console.log(`Showing ${filteredData.length} records from ${cutoffDate.toLocaleDateString()} to ${maxDate.toLocaleDateString()}`);
-            // Update UI
+
+            console.log(`Showing ${filteredData.length} records.`);
+
+            // Update UI Components
             initLineChart(filteredData);
+
+            // Reset Table to show ALL transactions in range
             updateTable(filteredData);
 
             // Determine active month for Pie Chart (Default to latest month with data)
@@ -179,6 +183,7 @@
 
             console.groupEnd();
         }
+
         // 4. CHART RENDERING
         function initLineChart(data) {
             const ctx = document.getElementById('expenseLineChart').getContext('2d');
@@ -280,18 +285,41 @@
             updateTable(monthlyData);
         }
 
+         // 4. FIX: FILTER TABLE BY GROUP (Pie Chart Click)
+         // Uses currentViewData (which is already date-filtered)
         function filterTableByGroup(groupName) {
-            console.log("[FILTER] Ledger showing only group:", groupName);
-            updateTable(allTransactions.filter(t => t.parentCategoryName === groupName));
+            console.log("Filtering table for group:", groupName);
+            const subSet = currentViewData.filter(t => t.parentCategoryName === groupName);
+            updateTable(subSet);
+        }
+         // 5. FIX: FILTER TABLE BY CHECKBOXES (Dropdown)
+        function applyTableFilters() {
+            const selectedCats = Array.from(document.querySelectorAll('.category-filter:checked')).map(cb => cb.value);
+            console.log("[FILTER] Applying checkboxes:", selectedCats);
+
+            // Filter by Parent Category Name
+            const subSet = currentViewData.filter(t => selectedCats.includes(t.parentCategoryName));
+            updateTable(subSet);
         }
 
+        // 6. RENDER TABLE
         function updateTable(data) {
             const tbody = document.getElementById('ledgerBody');
+
+            if (data.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="6" class="text-center text-muted py-3">No records found for this selection.</td></tr>';
+                return;
+            }
+
+            // Show top 50 to prevent browser lag
             tbody.innerHTML = data.slice(0, 50).map(t => `
                 <tr>
                     <td>${new Date(t.date).toLocaleDateString()}</td>
-                    <td class="text-truncate" style="max-width:200px">${t.description}</td>
-                    <td><div class="fw-bold small text-primary">${t.parentCategoryName}</div><div class="text-muted extra-small">${t.categoryName}</div></td>
+                    <td class="text-truncate" style="max-width:200px" title="${t.description}">${t.description}</td>
+                    <td>
+                        <div class="fw-bold small text-primary">${t.parentCategoryName}</div>
+                        <div class="text-muted extra-small">${t.categoryName}</div>
+                    </td>
                     <td class="text-end text-danger">$${t.debit.toLocaleString(undefined, {minimumFractionDigits: 2})}</td>
                     <td class="text-end text-success">$${t.credit.toLocaleString(undefined, {minimumFractionDigits: 2})}</td>
                     <td class="text-end fw-bold">$${t.balance.toLocaleString(undefined, {minimumFractionDigits: 2})}</td>

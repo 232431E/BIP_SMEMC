@@ -14,6 +14,7 @@
         public UserModel UserPreferences { get; set; }
         public List<IndustryModel> AllIndustries { get; set; } = new();
         public List<RegionModel> AllRegions { get; set; } = new();
+        public string AIAnalysis { get; set; }
     }
 
     public class ChartDataPoint

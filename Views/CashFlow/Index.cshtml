@@ -18,6 +18,25 @@
         </div>
     </div>
 
+    <div class="card border-0 shadow-sm mb-4 bg-light">
+        <div class="card-body">
+            <div class="d-flex align-items-center mb-2">
+                <i class="bi bi-robot text-primary me-2 fs-4"></i>
+                <h5 class="fw-bold m-0 text-primary">Gemini Financial Insight</h5>
+            </div>
+            <p class="mb-0 text-dark">
+                @if (!string.IsNullOrEmpty(Model.AIAnalysis))
+                {
+                    @Model.AIAnalysis
+                }
+                else
+                {
+                    <span class="text-muted fst-italic">Gathering insights...</span>
+                }
+            </p>
+        </div>
+    </div>
+
     @{
         var shortfall = Model.ChartData.Where(d => d.Predicted < 0).FirstOrDefault();
     }

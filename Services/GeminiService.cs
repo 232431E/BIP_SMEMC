@@ -113,5 +113,51 @@ namespace BIP_SMEMC.Services
 
             return ParseOutlookResponse(json);
         }
+
+        public async Task<string> AnalyzeFinancialTrends(List<TransactionModel> history)
+        {
+            var url = $"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={_apiKey}";
+
+            // 1. Aggregation (Reduce Tokens)
+            var monthlyStats = history
+                .GroupBy(t => t.Date.ToString("MMM yyyy"))
+                .Select(g => new {
+                    Month = g.Key,
+                    Net = g.Sum(t => t.Credit - t.Debit),
+                    In = g.Sum(t => t.Credit),
+                    Out = g.Sum(t => t.Debit)
+                })
+                .ToList();
+
+            var summaryJson = JsonConvert.SerializeObject(monthlyStats);
+
+            // 2. Efficient Prompt
+            var promptText = $@"
+    Act as a Financial Analyst. Here is the monthly cashflow summary for an SME:
+    {summaryJson}
+
+    Task:
+    1. Identify the trend (Growing, Declining, or Stable).
+    2. Point out the worst performing month.
+    3. Give 1 specific recommendation to improve cashflow based on this data.
+    
+    Keep response under 50 words. Plain text only.";
+
+            var request = new { contents = new[] { new { parts = new[] { new { text = promptText } } } } };
+
+            try
+            {
+                var response = await _http.PostAsync(url, new StringContent(JsonConvert.SerializeObject(request), Encoding.UTF8, "application/json"));
+                var json = await response.Content.ReadAsStringAsync();
+                var obj = JObject.Parse(json);
+                var text = obj["candidates"]?[0]?["content"]?["parts"]?[0]?["text"]?.ToString();
+                return text ?? "Analysis unavailable.";
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"[AI ERROR] {ex.Message}");
+                return "AI Analysis could not be generated at this time.";
+            }
+        }
     }
 }

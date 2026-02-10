@@ -17,6 +17,7 @@ namespace BIP_SMEMC
             builder.Services.AddScoped<CategorySeederService>();
             builder.Services.AddHttpClient<GeminiService>();
             builder.Services.AddHostedService<NewsBGService>();
+            builder.Services.AddScoped<DebtService>();
 
             // 2. Register the Supabase Client (Required for your database connections)
             builder.Services.AddScoped(provider =>

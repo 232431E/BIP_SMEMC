@@ -69,26 +69,14 @@ namespace BIP_SMEMC.Services
                 }
                 // PHASE 2: Tagging & Fallback Logic
                 var taggedArticles = LocalKeywordTagging(rawArticles, industryLookups, regionLookups);
-                // COLUMN VERIFICATION DEBUG
-                // User Request: If no articles found for specific industries today, ensure we have "General" news
-                if (!taggedArticles.Any(a => a.Industries.Any() && a.Industries[0] != "General Business"))
-                {
-                    Debug.WriteLine("[FALLBACK] No industry-specific matches. Tagging all as 'General Business' for Global coverage.");
-                    foreach (var art in taggedArticles)
-                    {
-                        if (!art.Industries.Any()) art.Industries.Add("General Business");
-                        if (!art.Regions.Any()) art.Regions.Add("Global");
-                    }
-                }
+                
                 // Retention: Remove news older than 7 days
                 // PHASE 3: Fixed Persistence (Avoid LINQ Where for Delete)
                 Debug.WriteLine("[DB] Cleaning up old news...");
                 // Use string-based Filter to avoid NotImplementedException
-                string deleteBeforeDate = DateTime.Today.AddDays(-7).ToString("yyyy-MM-dd");
-
                 await db.From<NewsArticleModel>()
-                        .Filter("date", Postgrest.Constants.Operator.LessThan, deleteBeforeDate)
-                        .Delete();
+                    .Filter("date", Postgrest.Constants.Operator.LessThan, DateTime.Today.AddDays(-2).ToString("yyyy-MM-dd"))
+                    .Delete();
                 Debug.WriteLine($"[DB] Saving {taggedArticles.Count} new articles...");
                 var insertResult = await db.From<NewsArticleModel>().Insert(taggedArticles);
                 Debug.WriteLine($"[SUPABASE] Successfully saved {insertResult.Models.Count} articles.");// PHASE 2: AI OUTLOOK BATCH
@@ -100,16 +88,14 @@ namespace BIP_SMEMC.Services
 
                 if (outlooks != null && outlooks.Any())
                 {
-                    await db.From<NewsOutlookModel>()
-                            .Filter("date", Postgrest.Constants.Operator.LessThan, DateTime.Today.AddDays(-7))
-                            .Delete();
+                    await db.From<NewsOutlookModel>().Delete();
                     await db.From<NewsOutlookModel>().Insert(outlooks);
                     Debug.WriteLine($"[AI SUCCESS] Saved {outlooks.Count} outlooks.");
                 }
             }
             catch (Exception ex)
             {
-                Debug.WriteLine($"[CRITICAL NEWS ERROR] {ex.Message}");
+                Debug.WriteLine($"[CRITICAL NEWS SERVICE ERROR] {ex.Message}");
                 // More specific logging for Supabase errors
                 if (ex.InnerException != null) Debug.WriteLine($"[INNER ERROR] {ex.InnerException.Message}");
                 throw;
@@ -122,19 +108,29 @@ namespace BIP_SMEMC.Services
 
             // Source 1: The Guardian
             Debug.WriteLine("[SOURCE] Hitting Guardian API...");
-            var guardianJson = await _http.GetStringAsync($"https://content.guardianapis.com/search?section=business&q=SME%20Asia&api-key={GuardianKey}");
-            var guardianList = ParseGuardian(guardianJson);
-            Debug.WriteLine($"[EXTRACTED] Found {guardianList.Count} articles from The Guardian.");
+            // FIX: Added 'order-by=newest' to get fresh news
+            string url = $"[https://content.guardianapis.com/search?section=business&q=SME%20Asia&order-by=newest&api-key=](https://content.guardianapis.com/search?section=business&q=SME%20Asia&order-by=newest&api-key=){GuardianKey}";
+            try
+            {
+                var guardianJson = await _http.GetStringAsync(url);
+                var guardianList = ParseGuardian(guardianJson);
+                Debug.WriteLine($"[EXTRACTED] Found {guardianList.Count} articles from The Guardian.");
+                foreach (var art in guardianList)
+                    Debug.WriteLine($" -> Headline: {art.Title} | URL: {art.Url}");
 
-            foreach (var art in guardianList)
-                Debug.WriteLine($" -> Headline: {art.Title} | URL: {art.Url}");
+                allArticles.AddRange(guardianList);
+                // Source 2: Yahoo Finance (via RSS or generic business search)
+                // YahooFinanceClient is typically for quotes; for news we use the public RSS feeds
+                var yahooRes = await _http.GetStringAsync("https://finance.yahoo.com/news/rssindex");
+                // Basic parsing logic for RSS would go here
 
-            allArticles.AddRange(guardianList);
-            // Source 2: Yahoo Finance (via RSS or generic business search)
-            // YahooFinanceClient is typically for quotes; for news we use the public RSS feeds
-            var yahooRes = await _http.GetStringAsync("https://finance.yahoo.com/news/rssindex");
-            // Basic parsing logic for RSS would go here
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"[GUARDIAN ERROR] {ex.Message}");
+            }
 
+            
             return allArticles;
         }
 
@@ -142,22 +138,11 @@ namespace BIP_SMEMC.Services
         {
             foreach (var art in articles)
             {
-                string text = (art.Title + " " + art.Summary).ToLower();
-                // Use a more inclusive check (keywords)
-                art.Industries = inds.Where(i => {
-                    var name = i.Name.ToLower();
-                    // Match "Food & Beverage" with "food", "restaurant", or "cafe"
-                    if (name.Contains("food") && (text.Contains("food") || text.Contains("restaurant") || text.Contains("dining"))) return true;
-                    if (name.Contains("tech") && (text.Contains("tech") || text.Contains("software") || text.Contains("ai"))) return true;
-                    return text.Contains(name);
-                }).Select(i => i.Name).ToList();
+                string content = (art.Title + " " + art.Summary).ToLower();
 
-                // Broaden region matching
-                art.Regions = regs.Where(r => {
-                    var name = r.Name.ToLower();
-                    if (name == "southeast asia" && (text.Contains("singapore") || text.Contains("malaysia") || text.Contains("vietnam"))) return true;
-                    return text.Contains(name);
-                }).Select(r => r.Name).ToList();
+                // Strict matching to avoid everything becoming "General"
+                art.Industries = inds.Where(i => content.Contains(i.Name.ToLower())).Select(i => i.Name).ToList();
+                art.Regions = regs.Where(r => content.Contains(r.Name.ToLower())).Select(r => r.Name).ToList();
 
                 if (!art.Industries.Any()) art.Industries.Add("General Business");
                 if (!art.Regions.Any()) art.Regions.Add("Global");

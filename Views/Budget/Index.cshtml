@@ -315,12 +315,25 @@
                 options: {
                     responsive: true, maintainAspectRatio: false,
                     scales: { x: { stacked: true }, y: { stacked: true } },
-                    onClick: (e, elements) => {
-                        if(elements.length > 0) {
-                            const idx = elements[0].index;
-                            renderMonthlyBreakdown(months[idx]); // TRIGGER DRILL DOWN
-                        }
-                    }
+                            onClick: (e, elements) => {
+                                if(elements.length > 0) {
+                                    const idx = elements[0].index;
+                                    const selectedMonthObj = months[idx]; // { month: 12, year: 2023, label: 'Dec 23' }
+
+                                    // Render Drilldown Chart
+                                    renderMonthlyBreakdown(selectedMonthObj);
+
+                                    // NEW: Filter Table for this month
+                                    const monthlyTransactions = transactions.filter(t => {
+                                        const d = new Date(t.date);
+                                        return (d.getMonth() + 1) === selectedMonthObj.month && d.getFullYear() === selectedMonthObj.year;
+                                    });
+
+                                    // Update Title and Body
+                                    document.getElementById('tableTitle').innerText = `Transactions for ${selectedMonthObj.label}`;
+                                    updateTable(monthlyTransactions);
+                                }
+                            }
                 }
             });
 
@@ -378,7 +391,29 @@
             return labels;
         }
         function updateRange(r) { activeRange = r; renderTrendChart(); }
-        function updateTable(data) { /* Same implementation as previous turn */ }
+                
+        // 1. UPDATE TABLE FUNCTION
+        function updateTable(data) {
+            const tbody = document.getElementById('budgetLedgerBody');
+            const tableTitle = document.getElementById('tableTitle');
+
+            if (!data || data.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="4" class="text-center text-muted">No transactions for this period.</td></tr>';
+                return;
+            }
+
+            // Sort by date descending
+            data.sort((a, b) => new Date(b.date) - new Date(a.date));
+
+            tbody.innerHTML = data.slice(0, 50).map(t => `
+                <tr>
+                    <td>${new Date(t.date).toLocaleDateString()}</td>
+                    <td class="text-truncate" style="max-width: 300px;" title="${t.description}">${t.description}</td>
+                    <td><span class="badge bg-light text-dark border">${t.parentCategoryName}</span></td>
+                    <td class="text-end fw-bold text-danger">$${t.debit.toLocaleString()}</td>
+                </tr>
+            `).join('');
+        }
 
         document.addEventListener("DOMContentLoaded", renderTrendChart);
     </script>
