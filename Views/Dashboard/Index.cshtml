@@ -1,0 +1,79 @@
+﻿@model BIP_SMEMC.Models.DashboardViewModel
+
+<div class="container-fluid p-4">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h1>Dashboard</h1>
+        <p class="text-muted">Welcome back, @Model.UserName!</p>
+    </div>
+
+    <div class="row g-3 mb-4">
+        <div class="col-md-4">
+            <div class="card p-3 shadow-sm border-0 bg-light">
+                <small class="text-muted">Total Revenue</small>
+                <h2 class="text-success">$@Model.TotalRevenue.ToString("N0")</h2>
+            </div>
+        </div>
+        <div class="col-md-4">
+            <div class="card p-3 shadow-sm border-0 bg-light">
+                <small class="text-muted">Total Expenses</small>
+                <h2 class="text-danger">$@Model.TotalExpenses.ToString("N0")</h2>
+            </div>
+        </div>
+        <div class="col-md-4">
+            <div class="card p-3 shadow-sm border-0 bg-light">
+                <small class="text-muted">Net Profit</small>
+                <h2 class="text-primary">$@Model.NetProfit.ToString("N0")</h2>
+            </div>
+        </div>
+    </div>
+
+    <div class="card border-start border-warning border-4 mb-4 shadow-sm">
+        <div class="card-body">
+            <div class="d-flex justify-content-between">
+                <h5 class="card-title text-warning">Next Best Action</h5>
+                <span class="badge bg-danger">@Model.TaskAction.Priority Priority</span>
+            </div>
+            <p><strong>@Model.TaskAction.Title</strong> - @Model.TaskAction.Reasoning</p>
+            <button class="btn btn-primary btn-sm">Take Action</button>
+        </div>
+    </div>
+
+    <div class="row">
+        <div class="col-lg-6 mb-4">
+            <div class="card h-100 shadow-sm">
+                <div class="card-header bg-white font-weight-bold">AI Financial Summary</div>
+                <div class="card-body">
+                    <p class="card-text">@Model.AiSummary</p>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-lg-6 mb-4">
+            <div class="card h-100 shadow-sm">
+                <div class="card-header bg-white font-weight-bold">15-Day Cash Flow Forecast</div>
+                <div class="card-body">
+                    <canvas id="cashFlowChart"></canvas>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script>
+    const ctx = document.getElementById('cashFlowChart').getContext('2d');
+    new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: ['Day 1', 'Day 5', 'Day 10', 'Day 15'],
+            datasets: [{
+                label: 'Projected Balance',
+                data: [25000, 27000, 24000, 29000],
+                borderColor: '#3b82f6',
+                tension: 0.4,
+                fill: true,
+                backgroundColor: 'rgba(59, 130, 246, 0.1)'
+            }]
+        }
+    });
+</script>

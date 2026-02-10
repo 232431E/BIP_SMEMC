@@ -1,0 +1,316 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <title>@ViewData["Title"] - Optiflow.AI</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+    <!-- Bootstrap CSS -->
+    <link rel="stylesheet" href="~/lib/bootstrap/dist/css/bootstrap.css" />
+    <link rel="stylesheet" href="~/css/site.css" />
+
+    <!-- Bootstrap Icons -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons/font/bootstrap-icons.css" rel="stylesheet">
+
+    @RenderSection("Styles", required: false)
+</head>
+
+<body class="bg-light">
+
+    <!-- ================= TOP STATUS BAR ================= -->
+    <div class="bg-primary text-white small py-1">
+        <div class="container-fluid d-flex justify-content-between align-items-center">
+            <span>
+                <i class="bi bi-lightning-charge-fill me-1"></i>
+                AI-Powered Financial Assistant for SMEs
+            </span>
+            <span>
+                <i class="bi bi-shield-check me-1"></i>
+                Secure · MAS-Aligned · Data-Protected
+            </span>
+        </div>
+    </div>
+
+    <!-- ================= MAIN NAVBAR ================= -->
+    <nav class="navbar navbar-expand-lg navbar-dark bg-dark shadow-sm py-3">
+        <div class="container-fluid">
+
+            <!-- Brand -->
+            <a class="navbar-brand fw-bold fs-3 d-flex align-items-center"
+               asp-controller="Home" asp-action="Index">
+                <i class="bi bi-bar-chart-fill text-warning me-2"></i>
+                Optiflow.AI
+            </a>
+
+            <!-- Toggle -->
+            <button class="navbar-toggler" type="button"
+                    data-bs-toggle="collapse"
+                    data-bs-target="#mainNavbar">
+                <span class="navbar-toggler-icon"></span>
+            </button>
+
+            <!-- Nav -->
+            <div class="collapse navbar-collapse" id="mainNavbar">
+                <ul class="navbar-nav me-auto mb-2 mb-lg-0">
+
+                    <li class="nav-item">
+                        <a class="nav-link fs-5"
+                           asp-controller="Dashboard" asp-action="Index">
+                            <i class="bi bi-speedometer2 me-1"></i>
+                            AI Dashboard
+                        </a>
+                    </li>
+
+                    <!-- Cashflow -->
+                    <li class="nav-item dropdown">
+                        <a class="nav-link dropdown-toggle fs-5"
+                           role="button" data-bs-toggle="dropdown">
+                            <i class="bi bi-cash-stack me-1"></i>
+                            Cashflow
+                        </a>
+                        <ul class="dropdown-menu">
+                            <li>
+                                <a class="dropdown-item"
+                                   asp-controller="Expense" asp-action="Index">
+                                    Expense Management
+                                </a>
+                            </li>
+                            <li>
+                                <a class="dropdown-item"
+                                   asp-controller="CashFlow" asp-action="Index">
+                                    Cashflow Forecast & Scenarios
+                                </a>
+                            </li>
+                            <li>
+                                <a class="dropdown-item"
+                                   asp-controller="Budget" asp-action="Index">
+                                    Budget & Variance
+                                </a>
+                            </li>
+                        </ul>
+                    </li>
+
+                    <!-- Invoices -->
+                    <li class="nav-item dropdown">
+                        <a class="nav-link fs-5"
+                           asp-controller="Invoice" asp-action="Index">
+                            <i class="bi bi-receipt me-1"></i>
+                            Invoices
+                        </a>
+                    </li>
+
+                    <!-- Credit -->
+                    <li class="nav-item dropdown">
+                        <a class="nav-link dropdown-toggle fs-5"
+                           role="button" data-bs-toggle="dropdown">
+                            <i class="bi bi-bank me-1"></i>
+                            Credit
+                        </a>
+                        <ul class="dropdown-menu">
+                            <li>
+                                <a class="dropdown-item"
+                                   asp-controller="Credit" asp-action="Score">
+                                    Credit Score Simulator
+                                </a>
+                            </li>
+                            <li>
+                                <a class="dropdown-item"
+                                   asp-controller="Credit" asp-action="Lenders">
+                                    Lender Matching
+                                </a>
+                            </li>
+                        </ul>
+                    </li>
+
+                    <!-- Learn -->
+                    <li class="nav-item dropdown">
+                        <a class="nav-link dropdown-toggle fs-5"
+                           role="button" data-bs-toggle="dropdown">
+                            <i class="bi bi-mortarboard me-1"></i>
+                            Learn
+                        </a>
+                        <ul class="dropdown-menu">
+                            <li>
+                                <a class="dropdown-item"
+                                   asp-controller="Learning" asp-action="Index">
+                                    Financial Literacy Hub
+                                </a>
+                            </li>
+                            <li>
+                                <a class="dropdown-item"
+                                   asp-controller="Community" asp-action="Index">
+                                    Community Forum
+                                </a>
+                            </li>
+                        </ul>
+                    </li>
+
+                    <!-- HR -->
+                    <li class="nav-item dropdown">
+                        <a class="nav-link dropdown-toggle fs-5"
+                           role="button" data-bs-toggle="dropdown">
+                            <i class="bi bi-people me-1"></i>
+                            HR
+                        </a>
+                        <ul class="dropdown-menu">
+                            <li>
+                                <a class="dropdown-item"
+                                   asp-controller="Payroll" asp-action="Index">
+                                    Payroll
+                                </a>
+                            </li>
+                            <li>
+                                <a class="dropdown-item"
+                                   asp-controller="Debt" asp-action="Index">
+                                    Debt Tracker
+                                </a>
+                            </li>
+                        </ul>
+                    </li>
+                </ul>
+
+                <!-- Account -->
+                <ul class="navbar-nav">
+                    <li class="nav-item dropdown">
+                        <a class="nav-link dropdown-toggle fs-5"
+                           role="button" data-bs-toggle="dropdown">
+                            <i class="bi bi-person-circle me-1"></i>
+                            Account
+                        </a>
+                        <ul class="dropdown-menu dropdown-menu-end">
+                            <li>
+                                <a class="dropdown-item"
+                                   asp-controller="Account" asp-action="Profile">
+                                    Profile
+                                </a>
+                            </li>
+                            <li><hr class="dropdown-divider" /></li>
+                            <li>
+                                <a class="dropdown-item text-primary"
+                                   asp-controller="Account" asp-action="Signup">
+                                    Sign Up
+                                </a>
+                            </li>
+                        </ul>
+                    </li>
+                </ul>
+
+            </div>
+        </div>
+    </nav>
+
+    <!-- ================= MAIN CONTENT ================= -->
+    <main class="container-fluid pb-5">
+        @RenderBody()
+    </main>
+
+    <!-- ================= FOOTER ================= -->
+    <footer class="bg-white border-top mt-5">
+        <div class="container-fluid py-4">
+
+            <div class="row">
+
+                <!-- Brand / About -->
+                <div class="col-md-4 mb-3">
+                    <h6 class="fw-bold text-dark">
+                        <i class="bi bi-bar-chart-fill text-primary me-1"></i>
+                        Optiflow.AI
+                    </h6>
+                    <p class="small text-muted mb-2">
+                        AI-powered financial assistant designed to help SMEs manage cashflow,
+                        optimize operations, and access credit with confidence.
+                    </p>
+                    <span class="badge bg-primary-subtle text-primary">
+                        Built for SMEs
+                    </span>
+                </div>
+
+                <!-- Service Links -->
+                <div class="col-md-3 mb-3">
+                    <h6 class="fw-semibold">Service</h6>
+                    <ul class="list-unstyled small">
+                        <li>
+                            <a asp-controller="Dashboard" asp-action="Index" class="text-decoration-none text-muted">
+                                AI Dashboard
+                            </a>
+                        </li>
+                        <li>
+                            <a asp-controller="Invoice" asp-action="Index" class="text-decoration-none text-muted">
+                                Invoice Management
+                            </a>
+                        </li>
+                        <li>
+                            <a asp-controller="Credit" asp-action="Score" class="text-decoration-none text-muted">
+                                Credit & Financing
+                            </a>
+                        </li>
+                        <li>
+                            <a asp-controller="Forecast" asp-action="Index" class="text-decoration-none text-muted">
+                                Cashflow Forecasting
+                            </a>
+                        </li>
+                    </ul>
+                </div>
+
+                <!-- Learning & Community -->
+                <div class="col-md-3 mb-3">
+                    <h6 class="fw-semibold">Learn & Community</h6>
+                    <ul class="list-unstyled small">
+                        <li>
+                            <a asp-controller="Learning" asp-action="Index" class="text-decoration-none text-muted">
+                                Financial Literacy Hub
+                            </a>
+                        </li>
+                        <li>
+                            <a asp-controller="Community" asp-action="Index" class="text-decoration-none text-muted">
+                                SME Community Forum
+                            </a>
+                        </li>
+                        <li class="text-muted">
+                            Webinars & SME Resources
+                        </li>
+                    </ul>
+                </div>
+
+                <!-- Trust & Compliance -->
+                <div class="col-md-2 mb-3">
+                    <h6 class="fw-semibold">Trust</h6>
+                    <ul class="list-unstyled small text-muted">
+                        <li>
+                            <i class="bi bi-shield-lock me-1"></i>
+                            Data Protected
+                        </li>
+                        <li>
+                            <i class="bi bi-check-circle me-1"></i>
+                            MAS-Aligned
+                        </li>
+                        <li>
+                            <i class="bi bi-lock me-1"></i>
+                            Secure Access
+                        </li>
+                    </ul>
+                </div>
+
+            </div>
+
+            <!-- Bottom Bar -->
+            <div class="d-flex justify-content-between align-items-center border-top pt-3 mt-3 small text-muted">
+                <span>
+                    © @DateTime.Now.Year Optiflow.AI · All rights reserved
+                </span>
+                <span>
+                    Empowering Underserved Businesses through AI
+                </span>
+            </div>
+
+        </div>
+    </footer>
+
+
+    <!-- Bootstrap JS -->
+    <script src="~/lib/bootstrap/dist/js/bootstrap.bundle.js"></script>
+    <script src="~/js/site.js"></script>
+
+    @RenderSection("Scripts", required: false)
+</body>
+</html>

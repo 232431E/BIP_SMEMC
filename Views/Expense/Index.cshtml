@@ -1,0 +1,301 @@
+﻿@model BIP_SMEMC.Models.ExpenseManagementViewModel
+
+<div class="p-4 bg-light min-vh-100">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <div class="p-4 bg-light min-vh-100">
+            @if (!string.IsNullOrEmpty(Model.ErrorMessage))
+            {
+                <div class="alert alert-danger shadow-sm border-start border-4 border-danger">
+                    <h6 class="fw-bold"><i class="bi bi-exclamation-octagon-fill me-2"></i>Import Error Details:</h6>
+                    <p class="mb-0 font-monospace small">@Model.ErrorMessage</p>
+                </div>
+            }
+        </div>
+        <h1 class="h3">Expense Analysis</h1>
+        <div class="d-flex gap-2 align-items-center">
+            <form asp-action="ImportExcel" method="post" enctype="multipart/form-data" class="d-flex gap-2">
+                <input type="file" name="file" class="form-control form-control-sm" accept=".xlsx" required />
+                <button type="submit" class="btn btn-sm btn-outline-primary">Import Excel</button>
+            </form>
+            <button onclick="resetToDefault()" class="btn btn-sm btn-danger">
+                <i class="bi bi-arrow-counterclockwise"></i> Reset View
+            </button>
+        </div>
+    </div>
+</div>
+
+<div class="row g-3 mb-4 text-center">
+    <div class="col-md-3">
+        <div class="card border-0 shadow-sm p-3 h-100">
+            <small class="text-muted fw-semibold">Total Expenses</small>
+            <h3 class="mb-0" id="totalExpensesLabel">$@Model.TotalExpenses.ToString("N0")</h3>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card border-0 shadow-sm p-3 h-100">
+            <small class="text-muted fw-semibold">Transactions</small>
+            <h3 class="mb-0">@Model.Transactions.Count</h3>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card border-0 shadow-sm p-3 h-100">
+            <small class="text-muted fw-semibold">Categories</small>
+            <h3 class="mb-0">@Model.ExpenseSubCategories.Count</h3>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card border-0 shadow-sm p-3 h-100">
+            <small class="text-muted fw-semibold">Avg Transaction</small>
+            @{
+                var avg = Model.Transactions.Any() ? Model.TotalExpenses / Model.Transactions.Count : 0;
+            }
+            <h3 class="mb-0">$@avg.ToString("N0")</h3>
+        </div>
+    </div>
+</div>
+
+<div class="row g-4 mb-4">
+        <div class="col-lg-8">
+            <div class="card border-0 shadow-sm p-3">
+                <div class="d-flex justify-content-between">
+                    <h6 class="fw-bold">Expense Trends (Sub-Categories)</h6>
+                    <div class="btn-group btn-group-sm">
+                        <button class="btn btn-outline-secondary" onclick="updateTimeframe(3)">3M</button>
+                        <button class="btn btn-outline-secondary" onclick="updateTimeframe(6)">6M</button>
+                        <button class="btn btn-outline-secondary" onclick="updateTimeframe(12)">1Y</button>
+                    </div>
+                </div>
+                <canvas id="expenseLineChart" style="max-height: 300px;"></canvas>
+            </div>
+        </div>
+        <div class="col-lg-4">
+            <div class="card border-0 shadow-sm p-3 h-100">
+                <h6 id="pieTitle" class="fw-bold">Month Breakdown</h6>
+                <canvas id="expensePieChart"></canvas>
+                <div id="top5List" class="mt-3 small"></div>
+            </div>
+        </div>
+    </div>
+
+    <div class="card border-0 shadow-sm">
+        <div class="card-header bg-white d-flex justify-content-between align-items-center py-3">
+            <h6 class="fw-bold m-0">Ledger Details (Max 20 rows)</h6>
+            <div class="dropdown">
+                <button class="btn btn-sm btn-light border" type="button" data-bs-toggle="dropdown" aria-haspopup="true" aria-expanded="false">
+                    <i class="bi bi-gear-fill"></i>
+                </button>
+                <div class="dropdown-menu dropdown-menu-end p-3 shadow" style="min-width: 250px;">
+                    <h6 class="dropdown-header px-0">Filter Sub-categories</h6>
+                    <div id="filterContainer" style="max-height: 200px; overflow-y: auto;">
+                        @foreach (var cat in Model.ExpenseSubCategories)
+                        {
+                            <div class="form-check">
+                                <input class="form-check-input category-filter" type="checkbox" value="@cat.Name" id="fcat_@cat.Id" checked>
+                                <label class="form-check-label small" for="fcat_@cat.Id">@cat.Name</label>
+                            </div>
+                        }
+                    </div>
+                    <div class="dropdown-divider"></div>
+                    <button class="btn btn-primary btn-xs w-100" onclick="applyTableFilters()">Apply Filters</button>
+                </div>
+            </div>
+        </div>
+
+        <div class="table-responsive">
+            <table class="table table-hover align-middle small">
+                <thead class="table-light">
+                    <tr><th>Date</th><th>Description</th><th>Sub-Category</th><th class="text-end">Debit</th><th class="text-end">Credit</th><th class="text-end">Balance</th></tr>
+                </thead>
+                <tbody id="ledgerBody">
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+@section Scripts {
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script>
+        // 1. DATA AUDIT LOGGING
+        const rawData = @Html.Raw(Json.Serialize(Model.Transactions)) || [];
+
+        console.group("Expense Dashboard: Data Ingestion");
+        console.log("Total Records from C#:", rawData.length);
+
+        const allTransactions = rawData.filter(t =>
+            t.parentCategoryName &&
+            !t.parentCategoryName.includes("Ordinary")
+        );
+
+        // Debug: Check Month Distribution in JS
+        console.log(`[INIT] Loaded ${allTransactions.length} transactions.`);
+
+        // 2. FIND DATE BOUNDARIES (The "Anchor")
+        // This ensures the chart works for historical data (e.g. 2023) without needing to be "Today"
+        const timestamps = allTransactions.map(t => new Date(t.date).getTime());
+        const maxDate = timestamps.length > 0 ? new Date(Math.max(...timestamps)) : new Date();
+        const minDate = timestamps.length > 0 ? new Date(Math.min(...timestamps)) : new Date();
+
+        console.log(`[DATA RANGE] ${minDate.toLocaleDateString()} to ${maxDate.toLocaleDateString()}`);
+
+        let lineChart, pieChart;
+        const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+        document.addEventListener("DOMContentLoaded", function() {
+            if (allTransactions.length === 0) {
+                console.error("[CRITICAL] No data records found for 2023 filter.");
+                return;
+            }
+            updateTimeframe(12);
+        });
+
+        function updateTimeframe(months) {
+            console.group(`[UI] Updating Timeframe: Last ${months} Months`);
+
+            // Calculate Start Date based on the LATEST DATA DATE (maxDate), not Today
+            const cutoffDate = new Date(maxDate);
+            cutoffDate.setMonth(maxDate.getMonth() - months);
+
+            // Filter
+            const filteredData = allTransactions.filter(t => {
+                const tDate = new Date(t.date);
+                return tDate >= cutoffDate && tDate <= maxDate;
+            });
+            
+            console.log(`Showing ${filteredData.length} records from ${cutoffDate.toLocaleDateString()} to ${maxDate.toLocaleDateString()}`);
+            // Update UI
+            initLineChart(filteredData);
+            updateTable(filteredData);
+
+            // Determine active month for Pie Chart (Default to latest month with data)
+            if(filteredData.length > 0) {
+                const lastTrans = filteredData[0]; // Assuming sorted descending
+                const lastMonthIdx = new Date(lastTrans.date).getMonth();
+                updatePieAndTop5(lastMonthIdx, filteredData);
+            }
+            // Update Buttons
+            document.querySelectorAll('.btn-group button').forEach(b => b.classList.remove('active', 'btn-secondary'));
+            event.target.classList.add('active', 'btn-secondary');
+
+            console.groupEnd();
+        }
+        // 4. CHART RENDERING
+        function initLineChart(data) {
+            const ctx = document.getElementById('expenseLineChart').getContext('2d');
+
+            if (window.lineChart instanceof Chart) window.lineChart.destroy();
+
+            // Aggregation: Group by Date
+            const dateMap = {};
+            const uniqueDates = [];
+
+            data.forEach(t => {
+                const d = t.date.split('T')[0];
+                if (!dateMap[d]) {
+                    dateMap[d] = {};
+                    uniqueDates.push(d);
+                }
+                const cat = t.parentCategoryName;
+                dateMap[d][cat] = (dateMap[d][cat] || 0) + t.debit;
+            });
+
+            uniqueDates.sort(); // Ensure chronological order
+
+            // Create Datasets
+            const groups = [...new Set(data.map(t => t.parentCategoryName))];
+            const datasets = groups.map((group, i) => ({
+                label: group,
+                data: uniqueDates.map(d => dateMap[d][group] || 0),
+                borderColor: `hsl(${(i * 60) % 360}, 70%, 50%)`,
+                tension: 0.3,
+                pointRadius: 2,
+                borderWidth: 2,
+                fill: false
+            }));
+
+            window.lineChart = new Chart(ctx, {
+                type: 'line',
+                data: { labels: uniqueDates, datasets: datasets },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    interaction: { mode: 'index', intersect: false },
+                    scales: {
+                        x: {
+                            ticks: {
+                                maxTicksLimit: 10, // Prevent clutter
+                                callback: function(val, index) {
+                                    const date = new Date(this.getLabelForValue(val));
+                                    return `${date.getDate()} ${monthNames[date.getMonth()]}`;
+                                }
+                            }
+                        }
+                    },
+                    onClick: (e, elements) => {
+                        if (elements.length > 0) {
+                            const idx = elements[0].index;
+                            const dateStr = uniqueDates[idx];
+                            const clickedMonth = new Date(dateStr).getMonth();
+                            updatePieAndTop5(clickedMonth, data); // Filter Pie by the clicked month
+                        }
+                    }
+                }
+            });
+        }
+        
+        function updatePieAndTop5(monthIdx, data) {
+            const monthlyData = data.filter(t => new Date(t.date).getMonth() === monthIdx);
+            console.log(`[PIE] Updating breakdown for ${monthNames[monthIdx]}. Found ${monthlyData.length} records.`);
+
+            document.getElementById('pieTitle').innerText = `${monthNames[monthIdx]} Spending Analysis`;
+
+            const groupTotals = {};
+            monthlyData.forEach(t => {
+                const g = t.parentCategoryName || "General";
+                groupTotals[g] = (groupTotals[g] || 0) + t.debit;
+            });
+            const sorted = Object.entries(groupTotals).sort((a,b) => b[1] - a[1]);
+
+            if(pieChart) pieChart.destroy();
+            pieChart = new Chart(document.getElementById('expensePieChart'), {
+                type: 'doughnut',
+                data: {
+                    labels: sorted.map(x => x[0]),
+                    datasets: [{
+                        data: sorted.map(x => x[1]),
+                        backgroundColor: ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#06b6d4']
+                    }]
+                }
+            });
+
+            document.getElementById('top5List').innerHTML = `
+                <div class="mt-3 p-3 bg-white rounded border border-primary shadow-sm">
+                    <h6 class="fw-bold text-primary mb-3 small border-bottom pb-2">Top Spend Groups (${monthNames[monthIdx]})</h6>
+                    ${sorted.slice(0,5).map(c => `
+                        <div class="d-flex justify-content-between small mb-2 border-bottom pb-1 clickable-row" onclick="filterTableByGroup('${c[0]}')">
+                            <span>${c[0]}</span><span class="fw-bold text-dark">$${c[1].toLocaleString()}</span>
+                        </div>`).join('')}
+                </div>`;
+
+            updateTable(monthlyData);
+        }
+
+        function filterTableByGroup(groupName) {
+            console.log("[FILTER] Ledger showing only group:", groupName);
+            updateTable(allTransactions.filter(t => t.parentCategoryName === groupName));
+        }
+
+        function updateTable(data) {
+            const tbody = document.getElementById('ledgerBody');
+            tbody.innerHTML = data.slice(0, 50).map(t => `
+                <tr>
+                    <td>${new Date(t.date).toLocaleDateString()}</td>
+                    <td class="text-truncate" style="max-width:200px">${t.description}</td>
+                    <td><div class="fw-bold small text-primary">${t.parentCategoryName}</div><div class="text-muted extra-small">${t.categoryName}</div></td>
+                    <td class="text-end text-danger">$${t.debit.toLocaleString(undefined, {minimumFractionDigits: 2})}</td>
+                    <td class="text-end text-success">$${t.credit.toLocaleString(undefined, {minimumFractionDigits: 2})}</td>
+                    <td class="text-end fw-bold">$${t.balance.toLocaleString(undefined, {minimumFractionDigits: 2})}</td>
+                </tr>`).join('');
+        }
+    </script>
+}
