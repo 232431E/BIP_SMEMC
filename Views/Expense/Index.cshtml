@@ -1,114 +1,146 @@
 ﻿@model BIP_SMEMC.Models.ExpenseManagementViewModel
 
-<div class="p-4 bg-light min-vh-100">
+<div class="container-fluid p-4 bg-light min-vh-100">
     <div class="d-flex justify-content-between align-items-center mb-4">
-        <div class="p-4 bg-light min-vh-100">
-            @if (!string.IsNullOrEmpty(Model.ErrorMessage))
-            {
-                <div class="alert alert-danger shadow-sm border-start border-4 border-danger">
-                    <h6 class="fw-bold"><i class="bi bi-exclamation-octagon-fill me-2"></i>Import Error Details:</h6>
-                    <p class="mb-0 font-monospace small">@Model.ErrorMessage</p>
-                </div>
-            }
+        <div>
+            <h1 class="h3 fw-bold text-dark mb-1">Expense Analysis</h1>
+            <p class="text-muted small mb-0">Overview of spending trends and details</p>
         </div>
-        <h1 class="h3">Expense Analysis</h1>
+
         <div class="d-flex gap-2 align-items-center">
             <form asp-action="ImportExcel" method="post" enctype="multipart/form-data" class="d-flex gap-2">
                 <input type="file" name="file" class="form-control form-control-sm" accept=".xlsx" required />
-                <button type="submit" class="btn btn-sm btn-outline-primary">Import Excel</button>
+                <button type="submit" class="btn btn-sm btn-dark">Import</button>
             </form>
-            <button onclick="resetToDefault()" class="btn btn-sm btn-danger">
-                <i class="bi bi-arrow-counterclockwise"></i> Reset View
+            <button onclick="resetToDefault()" class="btn btn-sm btn-outline-danger">
+                <i class="bi bi-arrow-counterclockwise"></i> Reset
             </button>
         </div>
     </div>
-</div>
 
-<div class="row g-3 mb-4 text-center">
-    <div class="col-md-3">
-        <div class="card border-0 shadow-sm p-3 h-100">
-            <small class="text-muted fw-semibold">Total Expenses</small>
-            <h3 class="mb-0" id="totalExpensesLabel">$@Model.TotalExpenses.ToString("N0")</h3>
+    @if (!string.IsNullOrEmpty(Model.ErrorMessage))
+    {
+        <div class="alert alert-danger shadow-sm mb-4">
+            <h6 class="fw-bold"><i class="bi bi-exclamation-octagon-fill me-2"></i>Error:</h6>
+            <p class="mb-0 small">@Model.ErrorMessage</p>
         </div>
-    </div>
-    <div class="col-md-3">
-        <div class="card border-0 shadow-sm p-3 h-100">
-            <small class="text-muted fw-semibold">Transactions</small>
-            <h3 class="mb-0">@Model.Transactions.Count</h3>
-        </div>
-    </div>
-    <div class="col-md-3">
-        <div class="card border-0 shadow-sm p-3 h-100">
-            <small class="text-muted fw-semibold">Categories</small>
-            <h3 class="mb-0">@Model.ExpenseSubCategories.Count</h3>
-        </div>
-    </div>
-    <div class="col-md-3">
-        <div class="card border-0 shadow-sm p-3 h-100">
-            <small class="text-muted fw-semibold">Avg Transaction</small>
-            @{
-                var avg = Model.Transactions.Any() ? Model.TotalExpenses / Model.Transactions.Count : 0;
-            }
-            <h3 class="mb-0">$@avg.ToString("N0")</h3>
-        </div>
-    </div>
-</div>
+    }
 
-<div class="row g-4 mb-4">
-        <div class="col-lg-8">
-            <div class="card border-0 shadow-sm p-3">
-                <div class="d-flex justify-content-between">
-                    <h6 class="fw-bold">Expense Trends (Sub-Categories)</h6>
+    <div class="row mb-4">
+        <div class="col-12">
+            <div class="card border-0 shadow-sm">
+                <div class="card-header bg-white py-3 d-flex justify-content-between align-items-center">
+                    <h6 class="fw-bold m-0"><i class="bi bi-graph-up me-2"></i>Expense Trend History</h6>
                     <div class="btn-group btn-group-sm">
-                        <button class="btn btn-outline-secondary" onclick="updateTimeframe(3)">3M</button>
-                        <button class="btn btn-outline-secondary" onclick="updateTimeframe(6)">6M</button>
-                        <button class="btn btn-outline-secondary" onclick="updateTimeframe(12)">1Y</button>
+                        <button class="btn btn-outline-secondary" onclick="updateTimeframe(3)">3 Months</button>
+                        <button class="btn btn-outline-secondary" onclick="updateTimeframe(6)">6 Months</button>
+                        <button class="btn btn-outline-secondary" onclick="updateTimeframe(12)">1 Year</button>
                     </div>
                 </div>
-                <canvas id="expenseLineChart" style="max-height: 300px;"></canvas>
-            </div>
-        </div>
-        <div class="col-lg-4">
-            <div class="card border-0 shadow-sm p-3 h-100">
-                <h6 id="pieTitle" class="fw-bold">Month Breakdown</h6>
-                <canvas id="expensePieChart"></canvas>
-                <div id="top5List" class="mt-3 small"></div>
+                <div class="card-body">
+                    <canvas id="expenseLineChart" style="max-height: 350px; width: 100%;"></canvas>
+                </div>
             </div>
         </div>
     </div>
 
-    <div class="card border-0 shadow-sm">
-        <div class="card-header bg-white d-flex justify-content-between align-items-center py-3">
-            <h6 class="fw-bold m-0">Ledger Details (Max 20 rows)</h6>
-            <div class="dropdown">
-                <button class="btn btn-sm btn-light border" type="button" data-bs-toggle="dropdown" aria-haspopup="true" aria-expanded="false">
-                    <i class="bi bi-gear-fill"></i>
-                </button>
-                <div class="dropdown-menu dropdown-menu-end p-3 shadow" style="min-width: 250px;">
-                    <h6 class="dropdown-header px-0">Filter Sub-categories</h6>
-                    <div id="filterContainer" style="max-height: 200px; overflow-y: auto;">
-                        @foreach (var cat in Model.ExpenseSubCategories)
-                        {
-                            <div class="form-check">
-                                <input class="form-check-input category-filter" type="checkbox" value="@cat.Name" id="fcat_@cat.Id" checked>
-                                <label class="form-check-label small" for="fcat_@cat.Id">@cat.Name</label>
-                            </div>
-                        }
+    <div class="row g-4">
+
+        <div class="col-lg-4">
+            <div class="card border-0 shadow-sm h-100">
+                <div class="card-header bg-white py-3">
+                    <h6 id="pieTitle" class="fw-bold m-0">Month Breakdown</h6>
+                </div>
+                <div class="card-body">
+                    <div style="max-height: 300px; position: relative;">
+                        <canvas id="expensePieChart"></canvas>
                     </div>
-                    <div class="dropdown-divider"></div>
-                    <button class="btn btn-primary btn-xs w-100" onclick="applyTableFilters()">Apply Filters</button>
+                    <div id="top5List" class="mt-4 small"></div>
                 </div>
             </div>
         </div>
 
-        <div class="table-responsive">
-            <table class="table table-hover align-middle small">
-                <thead class="table-light">
-                    <tr><th>Date</th><th>Description</th><th>Sub-Category</th><th class="text-end">Debit</th><th class="text-end">Credit</th><th class="text-end">Balance</th></tr>
-                </thead>
-                <tbody id="ledgerBody">
-                </tbody>
-            </table>
+        <div class="col-lg-8">
+            <div class="accordion shadow-sm" id="ledgerAccordion">
+                <div class="accordion-item border-0">
+                    <h2 class="accordion-header">
+                        <button class="accordion-button fw-bold bg-white" type="button" data-bs-toggle="collapse" data-bs-target="#collapseLedger" aria-expanded="true">
+                            <i class="bi bi-table me-2"></i> <span id="tableTitle">Detailed Ledger</span>
+                        </button>
+                    </h2>
+                    <div id="collapseLedger" class="accordion-collapse collapse show" data-bs-parent="#ledgerAccordion">
+                        <div class="accordion-body p-0">
+
+                            <div class="d-flex justify-content-between align-items-center p-3 border-bottom bg-light">
+                                <div class="d-flex align-items-center gap-2">
+                                    <label class="small fw-bold text-muted">Show:</label>
+                                    <select id="rowsPerPageSelect" class="form-select form-select-sm" style="width: 70px;" onchange="changePageSize()">
+                                        <option value="10">10</option>
+                                        <option value="25">25</option>
+                                        <option value="50">50</option>
+                                        <option value="10000">All</option>
+                                    </select>
+                                    <span class="small text-muted">rows</span>
+                                </div>
+
+                                <div class="dropdown">
+                                    <button class="btn btn-sm btn-white border shadow-sm dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false">
+                                        <i class="bi bi-funnel"></i> Filter Categories
+                                    </button>
+                                    <div class="dropdown-menu dropdown-menu-end p-3 shadow" style="min-width: 300px;">
+                                        <div class="mb-2">
+                                            <input type="text" id="catSearchInput" class="form-control form-control-sm mb-2" placeholder="Search..." onkeyup="filterCategoryList()">
+                                            <div class="form-check border-bottom pb-2">
+                                                <input class="form-check-input" type="checkbox" id="selectAllCheck" checked onchange="toggleAllCategories()">
+                                                <label class="form-check-label small fw-bold" for="selectAllCheck">Select All</label>
+                                            </div>
+                                        </div>
+                                        <div id="filterContainer" style="max-height: 200px; overflow-y: auto;">
+                                            @foreach (var cat in Model.ExpenseSubCategories)
+                                            {
+                                                <div class="form-check category-item">
+                                                    <input class="form-check-input category-filter" type="checkbox" value="@cat.Name" id="fcat_@cat.Id" checked>
+                                                    <label class="form-check-label small text-truncate" for="fcat_@cat.Id">@cat.Name</label>
+                                                </div>
+                                            }
+                                        </div>
+                                        <div class="dropdown-divider"></div>
+                                        <button class="btn btn-primary btn-sm w-100" onclick="applyTableFilters()">Apply Filters</button>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="table-responsive">
+                                <table class="table table-hover table-striped align-middle small mb-0">
+                                    <thead class="table-light">
+                                        <tr>
+                                            <th>Date</th>
+                                            <th>Description</th>
+                                            <th>Sub-Category</th>
+                                            <th class="text-end">Debit</th>
+                                            <th class="text-end">Credit</th>
+                                            <th class="text-end">Balance</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="ledgerBody">
+                                    </tbody>
+                                </table>
+                            </div>
+
+                            <div class="p-3 border-top d-flex justify-content-between align-items-center bg-light">
+                                <span class="small text-muted" id="pageInfoLabel">Showing 0-0 of 0</span>
+                                <nav>
+                                    <ul class="pagination pagination-sm mb-0">
+                                        <li class="page-item"><button class="page-link" onclick="changePage(-1)" id="btnPrev">Previous</button></li>
+                                        <li class="page-item"><button class="page-link" onclick="changePage(1)" id="btnNext">Next</button></li>
+                                    </ul>
+                                </nav>
+                            </div>
+
+                        </div>
+                    </div>
+                </div>
+            </div>
         </div>
     </div>
 </div>
@@ -116,214 +148,266 @@
 @section Scripts {
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script>
-        // 1. DATA AUDIT LOGGING
+        // --- 1. DATA INITIALIZATION ---
         const rawData = @Html.Raw(Json.Serialize(Model.Transactions)) || [];
+        const allTransactions = rawData.filter(t => t.parentCategoryName && !t.parentCategoryName.includes("Ordinary"));
 
-        console.group("Expense Dashboard: Data Ingestion");
-        console.log("Total Records from C#:", rawData.length);
+        // Global State
+        let state = {
+            monthsBack: 12,
+            currentViewDate: null,
+            activeCategories: [],
+            trendData: [],
 
-        const allTransactions = rawData.filter(t =>
-            t.parentCategoryName &&
-            !t.parentCategoryName.includes("Ordinary")
-        );
+            // Pagination State
+            currentPage: 1,
+            pageSize: 10,
+            currentTableData: [] // Stores the full filtered list for the table
+        };
 
-        // Debug: Check Month Distribution in JS
-        console.log(`[INIT] Loaded ${allTransactions.length} transactions.`);
-        console.groupEnd();
-
-        // 2. FIND DATE BOUNDARIES (The "Anchor")
-        // This ensures the chart works for historical data (e.g. 2023) without needing to be "Today"
-        const timestamps = allTransactions.map(t => new Date(t.date).getTime());
-        const maxDate = timestamps.length > 0 ? new Date(Math.max(...timestamps)) : new Date();
-        const minDate = timestamps.length > 0 ? new Date(Math.min(...timestamps)) : new Date();
-
-        console.log(`[DATA RANGE] ${minDate.toLocaleDateString()} to ${maxDate.toLocaleDateString()}`);
-
-        let lineChart, pieChart;
+        let lineChartInstance = null;
+        let pieChartInstance = null;
         const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
+        // --- 2. STARTUP ---
         document.addEventListener("DOMContentLoaded", function() {
-            if (allTransactions.length === 0) {
-                console.error("[CRITICAL] No data records found for 2023 filter.");
-                return;
-            }
+            state.activeCategories = Array.from(document.querySelectorAll('.category-filter')).map(el => el.value);
+
+            // Set initial date to latest
+            const timestamps = allTransactions.map(t => new Date(t.date).getTime());
+            state.currentViewDate = timestamps.length > 0 ? new Date(Math.max(...timestamps)) : new Date();
+
             updateTimeframe(12);
         });
 
+        // --- 3. CORE LOGIC ---
+
         function updateTimeframe(months) {
-            console.group(`[UI] Updating Timeframe: Last ${months} Months`);
+            state.monthsBack = months;
 
-            // Calculate Start Date based on the LATEST DATA DATE (maxDate), not Today
-            const cutoffDate = new Date(maxDate);
-            cutoffDate.setMonth(maxDate.getMonth() - months);
+            // UI Button Update
+            document.querySelectorAll('.btn-group button').forEach(b => {
+                b.classList.remove('active', 'btn-secondary');
+                b.classList.add('btn-outline-secondary');
+            });
+            const activeBtn = document.querySelector(`button[onclick="updateTimeframe(${months})"]`);
+            if (activeBtn) {
+                activeBtn.classList.remove('btn-outline-secondary');
+                activeBtn.classList.add('active', 'btn-secondary');
+            }
 
-            // Filter by Date Range
-            const filteredData = allTransactions.filter(t => {
-                const tDate = new Date(t.date);
-                return tDate >= cutoffDate && tDate <= maxDate;
+            // Filter Range
+            const endDate = getLatestDate();
+            const startDate = new Date(endDate);
+            startDate.setMonth(endDate.getMonth() - (months - 1));
+            startDate.setDate(1);
+
+            state.trendData = allTransactions.filter(t => {
+                const d = new Date(t.date);
+                return d >= startDate && d <= endDate;
             });
 
-            console.log(`Showing ${filteredData.length} records.`);
+            // Reset View to End Date
+            state.currentViewDate = endDate;
 
-            // Update UI Components
-            initLineChart(filteredData);
-
-            // Reset Table to show ALL transactions in range
-            updateTable(filteredData);
-
-            // Determine active month for Pie Chart (Default to latest month with data)
-            if(filteredData.length > 0) {
-                const lastTrans = filteredData[0]; // Assuming sorted descending
-                const lastMonthIdx = new Date(lastTrans.date).getMonth();
-                updatePieAndTop5(lastMonthIdx, filteredData);
-            }
-            // Update Buttons
-            document.querySelectorAll('.btn-group button').forEach(b => b.classList.remove('active', 'btn-secondary'));
-            event.target.classList.add('active', 'btn-secondary');
-
-            console.groupEnd();
+            renderLineChart(state.trendData);
+            renderMonthDetailView();
         }
 
-        // 4. CHART RENDERING
-        function initLineChart(data) {
+        function renderMonthDetailView() {
+            const viewMonth = state.currentViewDate.getMonth();
+            const viewYear = state.currentViewDate.getFullYear();
+
+            // 1. Get Data for selected Month
+            let monthData = state.trendData.filter(t => {
+                const d = new Date(t.date);
+                return d.getMonth() === viewMonth && d.getFullYear() === viewYear;
+            });
+
+            // 2. Render Pie
+            renderPieChart(monthData, viewMonth, viewYear);
+
+            // 3. Prepare Data for Table (Apply Category Filters)
+            const tableData = monthData.filter(t => state.activeCategories.includes(t.parentCategoryName));
+
+            // 4. Reset Pagination on month/filter change
+            state.currentTableData = tableData.sort((a, b) => new Date(a.date) - new Date(b.date)); // Sort Ascending
+            state.currentPage = 1;
+
+            // 5. Update Title
+            document.getElementById('tableTitle').innerText = `Transactions: ${monthNames[viewMonth]} ${viewYear}`;
+
+            renderTable();
+        }
+
+        // --- 4. PAGINATION & TABLE RENDER ---
+
+        function changePageSize() {
+            state.pageSize = parseInt(document.getElementById('rowsPerPageSelect').value);
+            state.currentPage = 1; // Reset to page 1
+            renderTable();
+        }
+
+        function changePage(direction) {
+            const maxPage = Math.ceil(state.currentTableData.length / state.pageSize);
+            const newPage = state.currentPage + direction;
+
+            if (newPage > 0 && newPage <= maxPage) {
+                state.currentPage = newPage;
+                renderTable();
+            }
+        }
+
+        function renderTable() {
+            const tbody = document.getElementById('ledgerBody');
+            const data = state.currentTableData;
+
+            if (data.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="6" class="text-center text-muted py-5">No records found.</td></tr>';
+                document.getElementById('pageInfoLabel').innerText = "0 records";
+                return;
+            }
+
+            // Pagination Logic
+            const startIndex = (state.currentPage - 1) * state.pageSize;
+            const endIndex = Math.min(startIndex + state.pageSize, data.length);
+            const pageData = data.slice(startIndex, endIndex);
+
+            // Render Rows
+            tbody.innerHTML = pageData.map(t => `
+                <tr>
+                    <td class="text-nowrap">${new Date(t.date).toLocaleDateString()}</td>
+                    <td class="text-truncate" style="max-width:220px" title="${t.description}">${t.description}</td>
+                    <td><span class="badge bg-light text-dark border">${t.parentCategoryName}</span></td>
+                    <td class="text-end text-danger">$${t.debit.toLocaleString(undefined, {minimumFractionDigits: 2})}</td>
+                    <td class="text-end text-success">$${t.credit.toLocaleString(undefined, {minimumFractionDigits: 2})}</td>
+                    <td class="text-end fw-bold">$${t.balance.toLocaleString(undefined, {minimumFractionDigits: 2})}</td>
+                </tr>`).join('');
+
+            // Update Pagination Controls
+            const total = data.length;
+            const totalPages = Math.ceil(total / state.pageSize);
+
+            document.getElementById('pageInfoLabel').innerText = `Showing ${startIndex + 1}-${endIndex} of ${total} records`;
+            document.getElementById('btnPrev').parentElement.classList.toggle('disabled', state.currentPage === 1);
+            document.getElementById('btnNext').parentElement.classList.toggle('disabled', state.currentPage >= totalPages);
+        }
+
+        // --- 5. CHARTS ---
+
+        function renderLineChart(data) {
             const ctx = document.getElementById('expenseLineChart').getContext('2d');
+            if (lineChartInstance) lineChartInstance.destroy();
 
-            if (window.lineChart instanceof Chart) window.lineChart.destroy();
-
-            // Aggregation: Group by Date
+            // Grouping logic...
             const dateMap = {};
-            const uniqueDates = [];
+            const uniqueDates = [...new Set(data.map(t => t.date.split('T')[0]))].sort();
 
             data.forEach(t => {
                 const d = t.date.split('T')[0];
-                if (!dateMap[d]) {
-                    dateMap[d] = {};
-                    uniqueDates.push(d);
-                }
-                const cat = t.parentCategoryName;
-                dateMap[d][cat] = (dateMap[d][cat] || 0) + t.debit;
+                if (!dateMap[d]) dateMap[d] = {};
+                dateMap[d][t.parentCategoryName] = (dateMap[d][t.parentCategoryName] || 0) + t.debit;
             });
 
-            uniqueDates.sort(); // Ensure chronological order
-
-            // Create Datasets
             const groups = [...new Set(data.map(t => t.parentCategoryName))];
             const datasets = groups.map((group, i) => ({
                 label: group,
                 data: uniqueDates.map(d => dateMap[d][group] || 0),
-                borderColor: `hsl(${(i * 60) % 360}, 70%, 50%)`,
-                tension: 0.3,
-                pointRadius: 2,
-                borderWidth: 2,
-                fill: false
+                borderColor: `hsl(${(i * 137) % 360}, 70%, 50%)`,
+                backgroundColor: `hsla(${(i * 137) % 360}, 70%, 50%, 0.1)`, // Added fill
+                tension: 0.3, pointRadius: 4, borderWidth: 2, fill: false
             }));
 
-            window.lineChart = new Chart(ctx, {
+            lineChartInstance = new Chart(ctx, {
                 type: 'line',
                 data: { labels: uniqueDates, datasets: datasets },
                 options: {
-                    responsive: true,
-                    maintainAspectRatio: false,
+                    responsive: true, maintainAspectRatio: false,
                     interaction: { mode: 'index', intersect: false },
+                    plugins: { legend: { display: false } }, // Keeping clean
                     scales: {
-                        x: {
-                            ticks: {
-                                maxTicksLimit: 10, // Prevent clutter
-                                callback: function(val, index) {
-                                    const date = new Date(this.getLabelForValue(val));
-                                    return `${date.getDate()} ${monthNames[date.getMonth()]}`;
-                                }
-                            }
-                        }
+                        x: { grid: { display: false } },
+                        y: { beginAtZero: true, grid: { borderDash: [5, 5] } }
                     },
                     onClick: (e, elements) => {
                         if (elements.length > 0) {
                             const idx = elements[0].index;
-                            const dateStr = uniqueDates[idx];
-                            const clickedMonth = new Date(dateStr).getMonth();
-                            updatePieAndTop5(clickedMonth, data); // Filter Pie by the clicked month
+                            state.currentViewDate = new Date(uniqueDates[idx]);
+                            renderMonthDetailView();
+                            // Scroll to accordion for better UX
+                            document.getElementById('ledgerAccordion').scrollIntoView({behavior: 'smooth'});
                         }
                     }
                 }
             });
         }
-        
-        function updatePieAndTop5(monthIdx, data) {
-            const monthlyData = data.filter(t => new Date(t.date).getMonth() === monthIdx);
-            console.log(`[PIE] Updating breakdown for ${monthNames[monthIdx]}. Found ${monthlyData.length} records.`);
 
-            document.getElementById('pieTitle').innerText = `${monthNames[monthIdx]} Spending Analysis`;
-
+        function renderPieChart(data, monthIdx, year) {
             const groupTotals = {};
-            monthlyData.forEach(t => {
+            data.forEach(t => {
                 const g = t.parentCategoryName || "General";
                 groupTotals[g] = (groupTotals[g] || 0) + t.debit;
             });
             const sorted = Object.entries(groupTotals).sort((a,b) => b[1] - a[1]);
 
-            if(pieChart) pieChart.destroy();
-            pieChart = new Chart(document.getElementById('expensePieChart'), {
+            document.getElementById('pieTitle').innerText = `Breakdown: ${monthNames[monthIdx]} ${year}`;
+
+            if(pieChartInstance) pieChartInstance.destroy();
+            pieChartInstance = new Chart(document.getElementById('expensePieChart'), {
                 type: 'doughnut',
                 data: {
                     labels: sorted.map(x => x[0]),
                     datasets: [{
                         data: sorted.map(x => x[1]),
-                        backgroundColor: ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#06b6d4']
+                        backgroundColor: ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#06b6d4', '#6366f1']
                     }]
+                },
+                options: {
+                    maintainAspectRatio: false,
+                    plugins: { legend: { display: false } }
                 }
             });
 
             document.getElementById('top5List').innerHTML = `
-                <div class="mt-3 p-3 bg-white rounded border border-primary shadow-sm">
-                    <h6 class="fw-bold text-primary mb-3 small border-bottom pb-2">Top Spend Groups (${monthNames[monthIdx]})</h6>
+                <div class="border rounded p-3 bg-light">
+                    <h6 class="small fw-bold text-muted mb-2 text-uppercase">Top Expenses</h6>
                     ${sorted.slice(0,5).map(c => `
-                        <div class="d-flex justify-content-between small mb-2 border-bottom pb-1 clickable-row" onclick="filterTableByGroup('${c[0]}')">
-                            <span>${c[0]}</span><span class="fw-bold text-dark">$${c[1].toLocaleString()}</span>
+                        <div class="d-flex justify-content-between small mb-2 border-bottom pb-1">
+                            <span class="text-truncate" style="max-width: 150px;">${c[0]}</span>
+                            <span class="fw-bold">$${c[1].toLocaleString()}</span>
                         </div>`).join('')}
+                     ${sorted.length === 0 ? '<div class="text-center text-muted small">No expenses this month</div>' : ''}
                 </div>`;
-
-            updateTable(monthlyData);
         }
 
-         // 4. FIX: FILTER TABLE BY GROUP (Pie Chart Click)
-         // Uses currentViewData (which is already date-filtered)
-        function filterTableByGroup(groupName) {
-            console.log("Filtering table for group:", groupName);
-            const subSet = currentViewData.filter(t => t.parentCategoryName === groupName);
-            updateTable(subSet);
+        // --- 6. UTILS & FILTERS ---
+
+        function filterCategoryList() {
+            const term = document.getElementById('catSearchInput').value.toLowerCase();
+            document.querySelectorAll('.category-item').forEach(item => {
+                const label = item.querySelector('label').innerText.toLowerCase();
+                item.classList.toggle('d-none', !label.includes(term));
+            });
         }
-         // 5. FIX: FILTER TABLE BY CHECKBOXES (Dropdown)
+
+        function toggleAllCategories() {
+            const isChecked = document.getElementById('selectAllCheck').checked;
+            document.querySelectorAll('.category-item:not(.d-none) .category-filter').forEach(cb => cb.checked = isChecked);
+        }
+
         function applyTableFilters() {
-            const selectedCats = Array.from(document.querySelectorAll('.category-filter:checked')).map(cb => cb.value);
-            console.log("[FILTER] Applying checkboxes:", selectedCats);
-
-            // Filter by Parent Category Name
-            const subSet = currentViewData.filter(t => selectedCats.includes(t.parentCategoryName));
-            updateTable(subSet);
+            const checkedBoxes = document.querySelectorAll('.category-filter:checked');
+            state.activeCategories = Array.from(checkedBoxes).map(cb => cb.value);
+            renderMonthDetailView();
         }
 
-        // 6. RENDER TABLE
-        function updateTable(data) {
-            const tbody = document.getElementById('ledgerBody');
+        function getLatestDate() {
+            const timestamps = allTransactions.map(t => new Date(t.date).getTime());
+            return timestamps.length > 0 ? new Date(Math.max(...timestamps)) : new Date();
+        }
 
-            if (data.length === 0) {
-                tbody.innerHTML = '<tr><td colspan="6" class="text-center text-muted py-3">No records found for this selection.</td></tr>';
-                return;
-            }
-
-            // Show top 50 to prevent browser lag
-            tbody.innerHTML = data.slice(0, 50).map(t => `
-                <tr>
-                    <td>${new Date(t.date).toLocaleDateString()}</td>
-                    <td class="text-truncate" style="max-width:200px" title="${t.description}">${t.description}</td>
-                    <td>
-                        <div class="fw-bold small text-primary">${t.parentCategoryName}</div>
-                        <div class="text-muted extra-small">${t.categoryName}</div>
-                    </td>
-                    <td class="text-end text-danger">$${t.debit.toLocaleString(undefined, {minimumFractionDigits: 2})}</td>
-                    <td class="text-end text-success">$${t.credit.toLocaleString(undefined, {minimumFractionDigits: 2})}</td>
-                    <td class="text-end fw-bold">$${t.balance.toLocaleString(undefined, {minimumFractionDigits: 2})}</td>
-                </tr>`).join('');
+        function resetToDefault() {
+            location.reload();
         }
     </script>
 }

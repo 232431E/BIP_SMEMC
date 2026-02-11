@@ -1,4 +1,6 @@
-﻿namespace BIP_SMEMC.Models
+﻿using System.Linq;
+
+namespace BIP_SMEMC.Models
 {
     public class BudgetViewModel
     {
@@ -15,10 +17,36 @@
         public DateTime LatestDataDate { get; set; } = DateTime.Today;
 
         // Calculated Property: Only show categories with activity
-        public List<CategoryModel> ActiveCategories => ExpenseCategories
-            .Where(c => AllTransactions.Any(t => t.ParentCategoryName == c.Name) ||
-                        BudgetRecords.Any(b => b.CategoryId == c.Id))
-            .ToList();
+        public List<CategoryModel> ActiveCategories
+        {
+            get
+            {
+                // 1. Get Names of categories with transactions
+                // ToList() ensures immediate execution
+                var transCatNames = AllTransactions
+                    .Where(t => !string.IsNullOrEmpty(t.ParentCategoryName))
+                    .Select(t => t.ParentCategoryName)
+                    .Distinct()
+                    .ToList();
+
+                // 2. Get IDs of categories with budget records
+                // Assuming BudgetModel.CategoryId is 'int'
+                var budgetCatIds = BudgetRecords
+                    .Select(b => b.CategoryId)
+                    .Distinct()
+                    .ToList();
+
+                // 3. Return categories that match EITHER condition
+                return ExpenseCategories
+                    .Where(c =>
+                        // Match by Name (from Transactions)
+                        transCatNames.Contains(c.Name) ||
+                        // Match by ID (from Budget), handling nullable Id safely
+                        (c.Id.HasValue && budgetCatIds.Contains(c.Id.Value))
+                    )
+                    .ToList();
+            }
+        }
 
         public List<BudgetItem> Budgets { get; set; } = new();
         public List<ExpenseItem> AllExpenses { get; set; } = new();
