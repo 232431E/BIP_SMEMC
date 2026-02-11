@@ -1,0 +1,145 @@
+﻿@model BIP_SMEMC.Models.Employee
+
+@{
+    ViewBag.Title = "Edit Employee";
+}
+
+<div class="container mt-4">
+    <div class="row">
+        <div class="col-md-8 offset-md-2">
+
+            @* Show ALL validation errors at the top *@
+            @if (!ViewData.ModelState.IsValid)
+            {
+                <div class="alert alert-danger">
+                    <h5><i class="bi bi-exclamation-triangle me-2"></i>Please fix the following errors:</h5>
+                    <ul class="mb-0">
+                        @foreach (var state in ViewData.ModelState)
+                        {
+                            foreach (var error in state.Value.Errors)
+                            {
+                                <li><strong>@state.Key:</strong> @error.ErrorMessage</li>
+                            }
+                        }
+                    </ul>
+                </div>
+            }
+
+            <div class="card shadow-sm border-0">
+                <div class="card-header bg-primary text-white">
+                    <h3 class="mb-0"><i class="bi bi-pencil me-2"></i>Edit Employee</h3>
+                </div>
+                <div class="card-body p-4">
+                    <form asp-action="Edit" asp-controller="Payroll" method="post">
+                        @Html.AntiForgeryToken()
+                        <input type="hidden" asp-for="Id" />
+
+                        <div asp-validation-summary="All" class="text-danger mb-3"></div>
+
+                        <div class="row">
+                            <div class="col-md-6">
+                                <div class="mb-3">
+                                    <label asp-for="EmployeeId" class="form-label fw-bold">
+                                        Employee ID <span class="text-danger">*</span>
+                                    </label>
+                                    <input asp-for="EmployeeId" class="form-control form-control-lg" />
+                                    <span asp-validation-for="EmployeeId" class="text-danger"></span>
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="mb-3">
+                                    <label asp-for="Age" class="form-label fw-bold">
+                                        Age <span class="text-danger">*</span>
+                                    </label>
+                                    <input asp-for="Age" class="form-control form-control-lg" type="number" />
+                                    <span asp-validation-for="Age" class="text-danger"></span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="mb-3">
+                            <label asp-for="Name" class="form-label fw-bold">
+                                Full Name <span class="text-danger">*</span>
+                            </label>
+                            <input asp-for="Name" class="form-control form-control-lg" />
+                            <span asp-validation-for="Name" class="text-danger"></span>
+                        </div>
+
+                        <div class="mb-3">
+                            <label asp-for="Email" class="form-label fw-bold">
+                                Email <span class="text-danger">*</span>
+                            </label>
+                            <input asp-for="Email" class="form-control form-control-lg" type="email" />
+                            <span asp-validation-for="Email" class="text-danger"></span>
+                        </div>
+
+                        <div class="mb-3">
+                            <label asp-for="Position" class="form-label fw-bold">
+                                Position <span class="text-danger">*</span>
+                            </label>
+                            <input asp-for="Position" class="form-control form-control-lg" />
+                            <span asp-validation-for="Position" class="text-danger"></span>
+                        </div>
+
+                        <div class="row">
+                            <div class="col-md-6">
+                                <div class="mb-3">
+                                    <label asp-for="MonthlySalary" class="form-label fw-bold">
+                                        Monthly Salary <span class="text-danger">*</span>
+                                    </label>
+                                    <div class="input-group input-group-lg">
+                                        <span class="input-group-text">$</span>
+                                        <input asp-for="MonthlySalary" class="form-control" type="number" step="0.01" />
+                                    </div>
+                                    <span asp-validation-for="MonthlySalary" class="text-danger"></span>
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="mb-3">
+                                    <label asp-for="OvertimeHourlyRate" class="form-label fw-bold">
+                                        Overtime Hourly Rate <span class="text-danger">*</span>
+                                    </label>
+                                    <div class="input-group input-group-lg">
+                                        <span class="input-group-text">$</span>
+                                        <input asp-for="OvertimeHourlyRate" class="form-control" type="number" step="0.01" />
+                                        <span class="input-group-text">/hr</span>
+                                    </div>
+                                    <span asp-validation-for="OvertimeHourlyRate" class="text-danger"></span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="mb-4">
+                            <label asp-for="DateJoined" class="form-label fw-bold">
+                                Date Joined <span class="text-danger">*</span>
+                            </label>
+                            <input asp-for="DateJoined" class="form-control form-control-lg" type="date" />
+                            <span asp-validation-for="DateJoined" class="text-danger"></span>
+                        </div>
+
+                        @* Required fields note *@
+                        <div class="mb-4">
+                            <small class="text-muted">
+                                <i class="bi bi-info-circle me-1"></i>
+                                Fields marked with <span class="text-danger fw-bold">*</span> are required.
+                            </small>
+                        </div>
+
+                        <div class="d-grid gap-2 d-md-flex justify-content-md-end">
+                            <a asp-action="Index" asp-controller="Payroll" class="btn btn-secondary btn-lg px-4">
+                                <i class="bi bi-x-circle me-2"></i> Cancel
+                            </a>
+                            <button type="submit" class="btn btn-primary btn-lg px-4">
+                                <i class="bi bi-check-circle me-2"></i> Update Employee
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+@section Scripts {
+    <partial name="_ValidationScriptsPartial" />
+}

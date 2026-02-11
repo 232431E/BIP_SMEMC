@@ -1,4 +1,5 @@
 ﻿using BIP_SMEMC.Models;
+using BIP_SMEMC.Models.SupabaseModels;
 using BIP_SMEMC.Services;
 using ClosedXML.Excel;
 using DocumentFormat.OpenXml.Vml;
@@ -436,10 +437,8 @@ namespace BIP_SMEMC.Controllers
         {
             Debug.WriteLine("=== [START] PAYROLL SYNC ===");
 
-            // 1. FETCH TRANSACTIONS FROM DB (To ensure we have IDs)
+            // 1. FETCH TRANSACTIONS
             var payrollIds = cache.Where(c => c.Name.Contains("Payroll") || c.Name.Contains("Salaries") || c.Name.Contains("Wages")).Select(c => c.Id).ToList();
-
-            // Fix: Ensure we get a wide date range to catch everything we just uploaded
             var allTrans = await _financeService.GetUserTransactions(email, new DateTime(2020, 1, 1), DateTime.Now);
             var payrollTrans = allTrans.Where(t => payrollIds.Contains(t.CategoryId)).ToList();
 
@@ -449,9 +448,13 @@ namespace BIP_SMEMC.Controllers
 
             // 2. LOAD EXISTING EMPLOYEES
             var existingDb = await _supabase.From<EmployeeModel>().Where(e => e.UserId == email).Get();
+            // Map Name -> UUID (Database Primary Key)
             var validEmployees = existingDb.Models.ToDictionary(e => e.Name, e => e.Id);
+
+            // Counter for custom IDs (e.g., SME001)
             int idCounter = existingDb.Models.Count + 1;
             string prefix = "EMP";
+            try { prefix = email.Split('@')[1].Split('.')[0].ToUpper().Substring(0, 3); } catch { }
 
             string[] noiseList = { "ntuc", "fairprice", "tissue", "breaking", "offer", "household", "cpf", "levy", "rental", "transport", "grab", "claims", "allowance", "repayment" };
 
@@ -469,18 +472,26 @@ namespace BIP_SMEMC.Controllers
 
                     if (!validEmployees.ContainsKey(name) && !employeesToUpsert.Any(e => e.Name == name))
                     {
+                        // Generate UUID in C# so we can use it immediately for logs
+                        string newUuid = Guid.NewGuid().ToString();
+
                         var newEmp = new EmployeeModel
                         {
-                            Id = Guid.NewGuid().ToString(), // Generate ID here (Fixed model allows this now)
-                            EmployeeId = $"{prefix}{idCounter:D3}",
+                            Id = newUuid,
                             UserId = email,
                             Name = name,
-                            Role = "Employee",
-                            Age = 30,
-                            MonthlySalary = t.Debit
+                            EmployeeId = $"{prefix}{idCounter:D3}", // Custom ID (SME001)
+                            Email = $"{name.Replace(" ", ".").ToLower()}@placeholder.com", // Required field
+                            Position = "Employee", // Required field
+                            Age = 30, // Required field
+                            MonthlySalary = t.Debit, // Required field
+                            OvertimeHourlyRate = 0, // Required field
+                            CPFRate = 20.00m,
+                            DateJoined = DateTime.Now
                         };
+
                         employeesToUpsert.Add(newEmp);
-                        validEmployees[name] = newEmp.Id; // Add to local map for logs
+                        validEmployees[name] = newUuid; // Add to local map for the next step
                         idCounter++;
                     }
                 }
@@ -491,6 +502,7 @@ namespace BIP_SMEMC.Controllers
             {
                 try
                 {
+                    // Ensure your EmployeeModel has [PrimaryKey("id", true)] if you want to send this specific UUID
                     await _supabase.From<EmployeeModel>().Upsert(employeesToUpsert);
                     Debug.WriteLine($"[DB] Inserted {employeesToUpsert.Count} new employees.");
                 }
@@ -504,7 +516,6 @@ namespace BIP_SMEMC.Controllers
 
             foreach (var t in payrollTrans)
             {
-                // Skip if already exists
                 if (t.Id.HasValue && processedTransIds.Contains(t.Id.Value)) continue;
 
                 var match = Regex.Match(t.Description, @"^([A-Za-z\s]+?)\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)", RegexOptions.IgnoreCase);
@@ -515,10 +526,9 @@ namespace BIP_SMEMC.Controllers
 
                     if (validEmployees.ContainsKey(name))
                     {
-                        string empUuid = validEmployees[name];
+                        string empUuid = validEmployees[name]; // This is the UUID
 
-                        // Logic: Reverse calculate Gross from Net (Debit)
-                        decimal netPay = t.Debit + t.Credit;
+                        decimal netPay = t.Debit; // Transaction is usually Net Pay
                         if (netPay == 0) continue;
 
                         decimal estimatedGross = netPay / 0.8m;
@@ -526,9 +536,8 @@ namespace BIP_SMEMC.Controllers
 
                         newPayrollLogs.Add(new PayrollLogModel
                         {
-                            // FIX: Generate UUID in C# so we control it 100%
-                            Id = Guid.NewGuid().ToString(),
-                            EmployeeId = empUuid,
+                            Id = Guid.NewGuid().ToString(), // Generate UUID for Log
+                            EmployeeId = empUuid,           // Link to Employee UUID
                             TransId = t.Id ?? 0,
                             NetPay = netPay,
                             GrossSalary = Math.Round(estimatedGross, 2),
@@ -546,9 +555,7 @@ namespace BIP_SMEMC.Controllers
             // 6. UPSERT LOGS
             if (newPayrollLogs.Any())
             {
-                // Deduplicate list by TransId before sending
                 var distinctLogs = newPayrollLogs.GroupBy(x => x.TransId).Select(g => g.First()).ToList();
-
                 var options = new Postgrest.QueryOptions { Upsert = true, OnConflict = "trans_id" };
 
                 try
@@ -560,37 +567,6 @@ namespace BIP_SMEMC.Controllers
                 {
                     Debug.WriteLine($"[DB ERROR] Payroll Sync Failed: {ex.Message}");
                 }
-            }
-        }
-
-        // --- FUNCTION 2: THE POST-PROCESS REFINER ---
-        private async Task SyncEmployeesFromTransactions(string email, List<CategoryModel> cache)
-        {
-            Debug.WriteLine("[TRACE] EXTRACTING HUMANS FROM PAYROLL CATEGORIES...");
-
-            // Strict list of what is NOT a human
-            string[] businessNoise = { "pte", "ltd", "corp", "bank", "engineering", "express", "shopee", "mcdonald", "clinic", "adjustment", "payroll", "levy" };
-
-            // Get IDs for any category containing "Payroll" or "Liabilities"
-            var payrollIds = cache.Where(c => c.Name.Contains("Payroll") || c.Name.Contains("Liabilities")).Select(c => c.Id).ToList();
-
-            var transRes = await _supabase.From<TransactionModel>().Where(t => t.UserId == email).Get();
-
-            var humanNames = transRes.Models
-                .Where(t => payrollIds.Contains(t.CategoryId))
-                .Select(t => {
-                    // Remove "Jun 23", "Dec'22", etc. from the description to get just the name
-                    string nameOnly = Regex.Replace(t.Description, @"\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)('\d{2})?|(\d{2,4})\b", "", RegexOptions.IgnoreCase).Trim();
-                    return Regex.Replace(nameOnly, @"[^\w\s]", "").Trim();
-                })
-                .Where(n => !string.IsNullOrEmpty(n) && !businessNoise.Any(noise => n.ToLower().Contains(noise)) && n.Split(' ').Length <= 4)
-                .Distinct(StringComparer.OrdinalIgnoreCase).ToList();
-
-            if (humanNames.Any())
-            {
-                var empChunk = humanNames.Select(n => new Dictionary<string, object> { { "user_id", email.ToLower() }, { "name", n }, { "role", "Employee" } }).ToList();
-                await _supabase.Rpc("sync_employees_batch", new Dictionary<string, object> { { "json_data", empChunk } });
-                Debug.WriteLine($"[DB SYNC] Found and saved {humanNames.Count} unique human employees.");
             }
         }
         private decimal ParseSafeDecimal(IXLCell cell)

@@ -1,0 +1,186 @@
+﻿@model BIP_SMEMC.Models.CalculatedPayroll
+
+@{
+    ViewBag.Title = "Payslip";
+    Layout = null; // No layout for printing
+}
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Payslip - @Model.Employee.Name</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet" />
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.0/font/bootstrap-icons.css" />
+    <style>
+        @@media print {
+            .no-print {
+                display: none;
+            }
+
+            body {
+                padding: 20px;
+            }
+        }
+
+        .payslip-header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 30px;
+            border-radius: 10px 10px 0 0;
+        }
+
+        .payslip-body {
+            border: 2px solid #667eea;
+            border-top: none;
+            border-radius: 0 0 10px 10px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container mt-4">
+        <div class="row">
+            <div class="col-md-8 offset-md-2">
+
+                @* Print Button *@
+                <div class="text-end mb-3 no-print">
+                    <button onclick="window.print()" class="btn btn-primary">
+                        <i class="bi bi-printer me-2"></i> Print Payslip
+                    </button>
+                    <a href="javascript:window.close()" class="btn btn-secondary">
+                        <i class="bi bi-x-circle me-2"></i> Close
+                    </a>
+                </div>
+
+                @* Payslip *@
+                <div class="payslip-header">
+                    <div class="text-center">
+                        <h2 class="mb-1">PAYSLIP</h2>
+                        <p class="mb-0">Pay Period: @Model.Month</p>
+                    </div>
+                </div>
+
+                <div class="payslip-body p-4">
+
+                    @* Company & Employee Info *@
+                    <div class="row mb-4">
+                        <div class="col-6">
+                            <h5 class="text-primary mb-3">Company Information</h5>
+                            <p class="mb-1"><strong>Company Name:</strong> SME Solutions Pte Ltd</p>
+                            <p class="mb-1"><strong>Address:</strong> 123 Business Road, Singapore 123456</p>
+                            <p class="mb-0"><strong>UEN:</strong> 201234567A</p>
+                        </div>
+                        <div class="col-6">
+                            <h5 class="text-primary mb-3">Employee Information</h5>
+                            <p class="mb-1"><strong>Name:</strong> @Model.Employee.Name</p>
+                            <p class="mb-1"><strong>Employee ID:</strong> @Model.Employee.EmployeeId</p>
+                            <p class="mb-1"><strong>Position:</strong> @Model.Employee.Position</p>
+                            <p class="mb-1"><strong>Email:</strong> @Model.Employee.Email</p>
+                            @if (!string.IsNullOrWhiteSpace(Model.Employee.NRIC))
+                            {
+                                <p class="mb-1"><strong>NRIC:</strong> @Model.Employee.NRIC</p>
+                            }
+                            <p class="mb-0"><strong>Date of Issue:</strong> @DateTime.Now.ToString("dd MMM yyyy")</p>
+                        </div>
+                    </div>
+
+                    <hr />
+
+                    @* Earnings Section *@
+                    <div class="mb-4">
+                        <h5 class="text-success mb-3"><i class="bi bi-cash-stack me-2"></i>Earnings</h5>
+                        <table class="table table-bordered">
+                            <thead class="table-light">
+                                <tr>
+                                    <th>Description</th>
+                                    <th class="text-end" style="width: 150px;">Amount (SGD)</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr>
+                                    <td>Basic Salary (Monthly)</td>
+                                    <td class="text-end">$@Model.BaseSalary.ToString("N2")</td>
+                                </tr>
+                                @if (Model.OvertimeHours > 0)
+                                {
+                                    <tr>
+                                        <td>Overtime (@Model.OvertimeHours hrs @@ $@Model.Employee.OvertimeHourlyRate.ToString("N2")/hr)</td>
+                                        <td class="text-end">$@Model.OvertimePay.ToString("N2")</td>
+                                    </tr>
+                                }
+                                <tr class="table-success fw-bold">
+                                    <td>GROSS PAY</td>
+                                    <td class="text-end">$@Model.GrossPay.ToString("N2")</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+
+                    @* Deductions Section *@
+                    <div class="mb-4">
+                        <h5 class="text-danger mb-3"><i class="bi bi-dash-circle me-2"></i>Deductions</h5>
+                        <table class="table table-bordered">
+                            <thead class="table-light">
+                                <tr>
+                                    <th>Description</th>
+                                    <th class="text-end" style="width: 150px;">Amount (SGD)</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr>
+                                    <td>Employee CPF Contribution (20%)</td>
+                                    <td class="text-end text-danger">-$@Model.EmployeeCPF.ToString("N2")</td>
+                                </tr>
+                                <tr class="table-danger fw-bold">
+                                    <td>TOTAL DEDUCTIONS</td>
+                                    <td class="text-end">-$@Model.EmployeeCPF.ToString("N2")</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+
+                    @* Employer Contributions *@
+                    <div class="mb-4">
+                        <h5 class="text-info mb-3"><i class="bi bi-building me-2"></i>Employer Contributions</h5>
+                        <table class="table table-bordered">
+                            <thead class="table-light">
+                                <tr>
+                                    <th>Description</th>
+                                    <th class="text-end" style="width: 150px;">Amount (SGD)</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr>
+                                    <td>Employer CPF Contribution (17%)</td>
+                                    <td class="text-end text-info">$@Model.EmployerCPF.ToString("N2")</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+
+                    <hr class="border-3" />
+
+                    @* Net Pay *@
+                    <div class="bg-success bg-opacity-10 p-4 rounded text-center">
+                        <h4 class="text-muted mb-2">NET PAY</h4>
+                        <h1 class="display-4 fw-bold text-success mb-0">$@Model.NetPay.ToString("N2")</h1>
+                        <p class="text-muted mt-2 mb-0">Amount to be credited to your account</p>
+                    </div>
+
+                    @* Footer *@
+                    <div class="mt-4 text-center text-muted">
+                        <small>
+                            <i class="bi bi-info-circle me-1"></i>
+                            This is a computer-generated payslip. No signature is required.
+                        </small>
+                    </div>
+
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>

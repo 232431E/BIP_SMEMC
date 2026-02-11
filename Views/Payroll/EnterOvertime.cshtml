@@ -1,0 +1,99 @@
+﻿@{
+    ViewBag.Title = "Enter Overtime Hours";
+    var employees = (List<BIP_SMEMC.Models.Employee>)ViewBag.Employees;
+}
+
+<div class="container mt-4">
+    <div class="row">
+        <div class="col-md-6 offset-md-3">
+
+            <div class="card shadow-sm border-0">
+                <div class="card-header bg-warning text-dark">
+                    <h3 class="mb-0"><i class="bi bi-clock-history me-2"></i>Enter Overtime Hours</h3>
+                </div>
+                <div class="card-body p-4">
+                    <form asp-action="EnterOvertime" asp-controller="Payroll" method="post">
+                        @Html.AntiForgeryToken()
+
+                        <div class="mb-3">
+                            <label for="employeeId" class="form-label fw-bold">
+                                Select Employee <span class="text-danger">*</span>
+                            </label>
+                            <select name="employeeId" id="employeeId" class="form-select form-select-lg" required>
+                                <option value="">-- Choose Employee --</option>
+                                @foreach (var emp in employees)
+                                {
+                                    <option value="@emp.Id">@emp.EmployeeId - @emp.Name (@emp.Position)</option>
+                                }
+                            </select>
+                        </div>
+
+                        <div class="row">
+                            <div class="col-md-6">
+                                <div class="mb-3">
+                                    <label for="month" class="form-label fw-bold">
+                                        Month <span class="text-danger">*</span>
+                                    </label>
+                                    <select name="month" id="month" class="form-select form-select-lg" required>
+                                        @for (int m = 1; m <= 12; m++)
+                                        {
+                                            <option value="@m" selected="@(m == DateTime.Now.Month)">
+                                                @(new DateTime(2024, m, 1).ToString("MMMM"))
+                                            </option>
+                                        }
+                                    </select>
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="mb-3">
+                                    <label for="year" class="form-label fw-bold">
+                                        Year <span class="text-danger">*</span>
+                                    </label>
+                                    <select name="year" id="year" class="form-select form-select-lg" required>
+                                        @for (int y = DateTime.Now.Year - 1; y <= DateTime.Now.Year + 1; y++)
+                                        {
+                                            <option value="@y" selected="@(y == DateTime.Now.Year)">@y</option>
+                                        }
+                                    </select>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="mb-4">
+                            <label for="overtimeHours" class="form-label fw-bold">
+                                Overtime Hours <span class="text-danger">*</span>
+                            </label>
+                            <input type="number"
+                                   name="overtimeHours"
+                                   id="overtimeHours"
+                                   class="form-control form-control-lg"
+                                   step="0.5"
+                                   min="0"
+                                   max="744"
+                                   placeholder="e.g., 10.5"
+                                   required />
+                            <div class="form-text">Enter the total overtime hours worked for the selected month</div>
+                        </div>
+
+                        @* Required fields note *@
+                        <div class="mb-4">
+                            <small class="text-muted">
+                                <i class="bi bi-info-circle me-1"></i>
+                                Fields marked with <span class="text-danger fw-bold">*</span> are required.
+                            </small>
+                        </div>
+
+                        <div class="d-grid gap-2 d-md-flex justify-content-md-end">
+                            <a asp-action="Index" asp-controller="Payroll" class="btn btn-secondary btn-lg px-4">
+                                <i class="bi bi-x-circle me-2"></i> Cancel
+                            </a>
+                            <button type="submit" class="btn btn-warning btn-lg px-4">
+                                <i class="bi bi-check-circle me-2"></i> Save Overtime
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>

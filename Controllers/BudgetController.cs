@@ -77,46 +77,57 @@ namespace BIP_SMEMC.Controllers
         [HttpPost]
         public async Task<IActionResult> UpdateBudget(int categoryId, decimal amount, int month, int year)
         {
-            var userEmail = User.Identity?.Name ?? "dummy@sme.com";
+            // 1. VALIDATION: Ensure we have a valid user, or FK Constraint will fail
+            var userEmail = User.Identity?.Name;
+
+            // SAFETY: If testing without login, ensure "dummy@sme.com" actually exists in your 'users' table.
+            if (string.IsNullOrEmpty(userEmail)) userEmail = "dummy@sme.com";
 
             try
             {
-                // 1. Check existing using safe filters
-                var existing = await _supabase.From<BudgetModel>()
+                // 2. FETCH: Find the exact record using the Unique Keys
+                var response = await _supabase.From<BudgetModel>()
                     .Filter("user_id", Postgrest.Constants.Operator.Equals, userEmail)
                     .Filter("category_id", Postgrest.Constants.Operator.Equals, categoryId)
                     .Filter("month", Postgrest.Constants.Operator.Equals, month)
                     .Filter("year", Postgrest.Constants.Operator.Equals, year)
                     .Get();
 
-                var budget = new BudgetModel
-                {
-                    UserId = userEmail,
-                    CategoryId = categoryId,
-                    Month = month,
-                    Year = year,
-                    BudgetAmount = amount
-                };
+                var existingRecord = response.Models.FirstOrDefault();
 
-                if (existing.Models.Any())
+                if (existingRecord != null)
                 {
-                    budget.Id = existing.Models.First().Id;
-                    await _supabase.From<BudgetModel>().Update(budget);
-                    Debug.WriteLine($"[CRUD] Updated Cat {categoryId}");
+                    // UPDATE PATH: Modify the FETCHED object directly. 
+                    // This ensures the client knows it's an existing record (PATCH).
+                    existingRecord.BudgetAmount = amount;
+                    await existingRecord.Update<BudgetModel>();
+                    Debug.WriteLine($"[CRUD] Updated Budget ID: {existingRecord.Id}");
                 }
                 else
                 {
-                    await _supabase.From<BudgetModel>().Insert(budget);
-                    Debug.WriteLine($"[CRUD] Inserted Cat {categoryId}");
+                    // INSERT PATH: Create a fresh object.
+                    // The [PrimaryKey("id", false)] attribute in your model ensures ID is omitted 
+                    // from the payload, allowing the DB to auto-generate it.
+                    var newBudget = new BudgetModel
+                    {
+                        UserId = userEmail,
+                        CategoryId = categoryId,
+                        Month = month,
+                        Year = year,
+                        BudgetAmount = amount
+                    };
+                    await _supabase.From<BudgetModel>().Insert(newBudget);
+                    Debug.WriteLine($"[CRUD] Inserted New Budget");
                 }
 
                 return Json(new { success = true });
             }
             catch (Exception ex)
             {
-                Debug.WriteLine($"[ERROR] {ex.Message}");
+                Debug.WriteLine($"[CRUD ERROR] {ex.Message}");
                 return Json(new { success = false, error = ex.Message });
             }
         }
+
     }
 }

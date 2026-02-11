@@ -18,13 +18,26 @@ namespace BIP_SMEMC
             builder.Services.AddHttpClient<GeminiService>();
             builder.Services.AddHostedService<NewsBGService>();
             builder.Services.AddScoped<DebtService>();
+            builder.Services.AddScoped<PayrollService>();
+
 
             // 2. Register the Supabase Client (Required for your database connections)
             builder.Services.AddScoped(provider =>
             {
                 var url = builder.Configuration["Supabase:Url"];
                 var key = builder.Configuration["Supabase:Key"];
-                return new Supabase.Client(url, key);
+
+                var options = new Supabase.SupabaseOptions
+                {
+                    AutoRefreshToken = true,
+                    AutoConnectRealtime = true
+                };
+
+                // Initialize the client
+                var client = new Supabase.Client(url, key, options);
+                client.InitializeAsync().Wait(); // Ensure it's initialized
+                return client;
+
             });
 
             var app = builder.Build();

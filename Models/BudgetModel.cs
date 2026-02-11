@@ -1,6 +1,8 @@
 ﻿using Postgrest.Attributes;
 using Postgrest.Models;
 using System.ComponentModel.DataAnnotations.Schema;
+using Newtonsoft.Json;
+
 namespace BIP_SMEMC.Models
 {
     [Postgrest.Attributes.Table("budgets")]
@@ -28,6 +30,7 @@ namespace BIP_SMEMC.Models
         public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 
         [NotMapped]
+        [JsonIgnore]
         public string? CategoryName { get; set; }
 
     }

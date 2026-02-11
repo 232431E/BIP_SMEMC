@@ -1,0 +1,135 @@
+﻿@model List<BIP_SMEMC.Models.CalculatedDebt>
+
+@{
+    ViewBag.Title = "Debt Tracker";
+}
+
+<div class="container-fluid mt-4 px-4">
+
+    @* Success Message *@
+    @if (TempData["SuccessMessage"] != null)
+    {
+        <div class="alert alert-success alert-dismissible fade show" role="alert">
+            <i class="bi bi-check-circle me-2"></i>
+            @TempData["SuccessMessage"]
+            <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+        </div>
+    }
+
+    <div class="mb-4">
+        <h1 class="display-5 fw-bold">Debt Tracker</h1>
+        <p class="text-muted fs-5">Manage your business finances</p>
+    </div>
+
+
+
+    @* Overdue Debts Banner *@
+    @if (ViewBag.OverdueDebts != null && ((List<BIP_SMEMC.Models.CalculatedDebt>)ViewBag.OverdueDebts).Count > 0)
+    {
+        var overdueDebts = (List<BIP_SMEMC.Models.CalculatedDebt>)ViewBag.OverdueDebts;
+        <div class="alert alert-danger d-flex align-items-center mb-3" role="alert">
+            <i class="bi bi-exclamation-triangle-fill me-3 fs-4"></i>
+            <div>
+                <strong>⚠️ OVERDUE:</strong> You have @overdueDebts.Count overdue debts totaling $@overdueDebts.Sum(d => d.TotalAmount).ToString("N2")
+            </div>
+        </div>
+    }
+
+    @* Upcoming Debts Banner *@
+    @if (ViewBag.UpcomingDebts != null && ((List<BIP_SMEMC.Models.CalculatedDebt>)ViewBag.UpcomingDebts).Count > 0)
+    {
+        var upcomingDebts = (List<BIP_SMEMC.Models.CalculatedDebt>)ViewBag.UpcomingDebts;
+        <div class="alert alert-warning d-flex align-items-center mb-3" role="alert">
+            <i class="bi bi-clock-fill me-3 fs-4"></i>
+            <div>
+                <strong>⏰ UPCOMING:</strong> @upcomingDebts.Count debts due within 7 days totaling $@upcomingDebts.Sum(d => d.TotalAmount).ToString("N2")
+            </div>
+        </div>
+    }
+
+    @* Total Summary Card *@
+    <div class="card shadow-sm mb-4 border-0">
+        <div class="card-body p-4">
+            <div class="row align-items-center">
+                <div class="col-md-6">
+                    <h2 class="mb-0 text-primary fw-bold">Total Owed: $@ViewBag.TotalOwed.ToString("N2")</h2>
+                </div>
+                <div class="col-md-6 text-md-end mt-2 mt-md-0">
+                    <p class="mb-0 text-muted fs-5">@ViewBag.DebtCount Active Debt@(ViewBag.DebtCount != 1 ? "s" : "")</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    @* Add Debt Button *@
+    <div class="mb-4">
+        <a href="@Url.Action("Create")" class="btn btn-primary btn-lg px-4">
+            <i class="bi bi-plus-circle me-2"></i> Add New Debt
+        </a>
+    </div>
+
+    @* Debt Cards Grid *@
+    @if (Model == null || Model.Count == 0)
+    {
+        <div class="card shadow-sm border-0">
+            <div class="card-body text-center py-5">
+                <i class="bi bi-inbox text-muted mb-3" style="font-size: 4rem;"></i>
+                <h3 class="text-muted mb-3">No debts tracked yet</h3>
+                <p class="text-muted mb-4">Click "Add New Debt" to start tracking your business loans</p>
+            </div>
+        </div>
+    }
+    else
+    {
+        <div class="row g-4">
+            @foreach (var debt in Model)
+            {
+                <div class="col-12 col-md-6 col-lg-4">
+                    <div class="card h-100 shadow-sm border-0 hover-shadow" style="cursor: pointer; transition: all 0.3s;" onclick="window.location='@Url.Action("Details", new { id = debt.Id })'">
+                        <div class="card-body p-4">
+                            <h5 class="card-title fw-bold mb-3">@debt.Creditor</h5>
+
+                            <div class="mb-2 d-flex justify-content-between">
+                                <span class="text-muted">Principal:</span>
+                                <span class="fw-semibold">$@debt.PrincipalAmount.ToString("N2")</span>
+                            </div>
+
+                            <div class="mb-2 d-flex justify-content-between">
+                                <span class="text-muted">Interest Rate:</span>
+                                <span class="fw-semibold">@debt.InterestRate%</span>
+                            </div>
+
+                            <div class="mb-3 d-flex justify-content-between">
+                                <span class="text-muted">Due Date:</span>
+                                <span class="fw-semibold">@debt.DueDate.ToString("MMM dd, yyyy")</span>
+                            </div>
+
+                            <hr />
+
+                            <div class="mb-3 d-flex justify-content-between align-items-center">
+                                <span class="fs-5 fw-bold">Total:</span>
+                                <span class="fs-4 fw-bold text-primary">$@debt.TotalAmount.ToString("N2")</span>
+                            </div>
+
+                            @{
+                                var badgeClass = debt.DaysRemaining < 0 ? "bg-danger" : debt.DaysRemaining <= 7 ? "bg-warning text-dark" : "bg-success";
+                                var daysText = debt.DaysRemaining < 0 ? $"OVERDUE by {Math.Abs(debt.DaysRemaining)} days" : $"{debt.DaysRemaining} days remaining";
+                            }
+
+                            <div class="d-grid">
+                                <span class="badge @badgeClass p-2 fs-6">@daysText</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            }
+        </div>
+    }
+</div>
+
+<style>
+    .hover-shadow:hover {
+        transform: translateY(-5px);
+        box-shadow: 0 .5rem 1rem rgba(0,0,0,.15) !important;
+    }
+</style>
