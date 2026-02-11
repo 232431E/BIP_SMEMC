@@ -37,74 +37,78 @@ namespace BIP_SMEMC.Controllers
                 ViewBag.AllIndustries = industries;
                 ViewBag.AllRegions = regions;
 
-                // 2. User Prefs
+                // ---------------------------------------------------------
+                // NEWS RETRIEVAL LOGIC (UPDATED)
+                // ---------------------------------------------------------
+
+                // 1. Get User Preferences
                 var userRes = await _supabase.From<UserModel>().Where(u => u.Email == userEmail).Get();
-                model.UserPreferences = userRes.Models.FirstOrDefault();
-                Debug.WriteLine($"[DB] User Prefs: {(model.UserPreferences == null ? "NULL" : "FOUND")}");
+                var userPrefs = userRes.Models.FirstOrDefault();
+                model.UserPreferences = userPrefs; // For Checkboxes
 
-                // 3. News Retrieval with Detailed Logs
-                Debug.WriteLine("[DB] Attempting to fetch NewsArticles...");
-                var newsQuery = _supabase.From<NewsArticleModel>().Select("*");
+                // 2. Fetch ALL News from DB (Since DB is small ~100 items due to retention)
+                var allNewsRes = await _supabase.From<NewsArticleModel>()
+                    .Order("date", Postgrest.Constants.Ordering.Descending)
+                    .Limit(100)
+                    .Get();
 
-                if (model.UserPreferences?.Industries != null && model.UserPreferences.Industries.Any())
+                var allNews = allNewsRes.Models;
+
+                // 3. Filter in Memory (C#) - THIS IS THE FIX YOU ASKED FOR
+                // This handles "OR" logic: (Has Industry X OR Has Region Y)
+                List<NewsArticleModel> filteredNews;
+
+                if (userPrefs != null &&
+                   ((userPrefs.Industries != null && userPrefs.Industries.Any()) ||
+                    (userPrefs.Regions != null && userPrefs.Regions.Any())))
                 {
-                    Debug.WriteLine($"[FILTER] User Industries: {string.Join(",", model.UserPreferences.Industries)}");
-                    newsQuery = newsQuery.Filter("industries", Postgrest.Constants.Operator.Overlap, model.UserPreferences.Industries);
+                    var pInds = userPrefs.Industries ?? new List<string>();
+                    var pRegs = userPrefs.Regions ?? new List<string>();
+
+                    filteredNews = allNews.Where(n =>
+                        // Article Industry overlaps with User Industry Prefs
+                        (n.Industries != null && n.Industries.Intersect(pInds, StringComparer.OrdinalIgnoreCase).Any()) ||
+                        // Article Region overlaps with User Region Prefs
+                        (n.Regions != null && n.Regions.Intersect(pRegs, StringComparer.OrdinalIgnoreCase).Any())
+                    ).ToList();
+                }
+                else
+                {
+                    // If no preferences set, show everything
+                    filteredNews = allNews.ToList();
                 }
 
-                var newsRes = await newsQuery.Order("date", Postgrest.Constants.Ordering.Descending).Limit(12).Get();
-                model.News = newsRes.Models;
-                Debug.WriteLine($"[DB] Found {model.News.Count} news articles matching prefs.");
+                // Take top 20 after filtering
+                model.News = filteredNews.Take(20).ToList();
 
-                // FALLBACK: If no news matches user preferences, show ALL recent news
+                // ---------------------------------------------------------
+                // TRIGGER BACKGROUND REFRESH IF EMPTY
+                // ---------------------------------------------------------
                 if (!model.News.Any())
                 {
-                    Debug.WriteLine("[INFO] No news matches user preferences. Falling back to Global/Recent news.");
-                    var globalNews = await _supabase.From<NewsArticleModel>()
-                        .Order("date", Postgrest.Constants.Ordering.Descending)
-                        .Limit(12).Get();
-                    model.News = globalNews.Models;
-                }
-                // TRIGGER REFRESH: If still no news at all, run the background process
-                if (!model.News.Any())
-                {
-                    int attempts = 0;
-                    bool success = false;
-                    Debug.WriteLine("[TRIGGER] No news found. Starting Background Service Manual Run...");
-
-                    while (attempts < 3 && !success)
+                    // Call the service manually if DB is empty
+                    var newsService = HttpContext.RequestServices.GetService<NewsBGService>();
+                    if (newsService != null)
                     {
-                        attempts++;
-                        Debug.WriteLine($"[RETRY] Attempt {attempts} of 3 to fetch news...");
-                        try
-                        {
-                            var ai = HttpContext.RequestServices.GetRequiredService<GeminiService>();
-                            var newsService = HttpContext.RequestServices.GetRequiredService<IEnumerable<IHostedService>>()
-                                                .OfType<NewsBGService>().FirstOrDefault();
-
-                            if (newsService != null)
-                            {
-                                await newsService.RunDailyNewsCycle(_supabase, ai);
-                                success = true;
-                            }
-                        }
-                        catch (Exception ex)
-                        {
-                            Debug.WriteLine($"[RETRY ERROR] Attempt {attempts} failed: {ex.Message}");
-                        }
-                    }
-
-                    if (!success)
-                    {
-                        ViewBag.ErrorMessage = "Max amount of times today for articles, unable to handle the request. Gemini cannot handle it without having the news. Please try again later.";
-                        Debug.WriteLine("[TIMEOUT] Failed to retrieve news after 3 attempts.");
-                    }
-                    else
-                    {
-                        // Re-fetch now that we have data
-                        model.News = (await _supabase.From<NewsArticleModel>().Get()).Models;
+                        await newsService.TriggerNewsCycle();
+                        // Refetch one last time
+                        model.News = (await _supabase.From<NewsArticleModel>().Order("date", Postgrest.Constants.Ordering.Descending).Limit(12).Get()).Models;
                     }
                 }
+                // Populate ViewBag for Filter Modal
+                var indList = (await _supabase.From<IndustryModel>().Get()).Models;
+                var regList = (await _supabase.From<RegionModel>().Get()).Models;
+                ViewBag.AllIndustries = indList.OrderBy(i => i.Name).ToList();
+                ViewBag.AllRegions = regList.OrderBy(r => r.Name).ToList();
+
+                // Get Outlooks
+                var outlookRes = await _supabase.From<NewsOutlookModel>().Get();
+                // Filter outlooks relevant to user
+                var relOutlook = outlookRes.Models.Where(o =>
+                     (userPrefs?.Industries?.Contains(o.Industry) == true) ||
+                     (userPrefs?.Regions?.Contains(o.Region) == true)
+                ).ToList();
+                ViewBag.Outlooks = relOutlook;
 
                 // 1. Retrieve Data (Ordered by Date ASCENDING for running total calculation)
                 var history = await _financeService.GetUserTransactions(userEmail, latestDate.AddMonths(-6), latestDate);

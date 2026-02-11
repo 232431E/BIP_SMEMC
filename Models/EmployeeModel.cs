@@ -1,7 +1,7 @@
 ﻿using System;
 using System.ComponentModel.DataAnnotations;
-using Postgrest.Attributes; // Add this namespace
-using Postgrest.Models;     // Add this namespace
+using Postgrest.Attributes;
+using Postgrest.Models;
 
 namespace BIP_SMEMC.Models.SupabaseModels
 {
@@ -32,7 +32,7 @@ namespace BIP_SMEMC.Models.SupabaseModels
 
         [Display(Name = "NRIC")]
         [Column("nric")]
-        public string NRIC { get; set; }  // OPTIONAL - for payslip display
+        public string? NRIC { get; set; } // CHANGED: Added ? to make nullable
 
         [Required(ErrorMessage = "Position is required")]
         [Display(Name = "Position")]
@@ -59,19 +59,11 @@ namespace BIP_SMEMC.Models.SupabaseModels
 
         [Display(Name = "CPF Rate (%)")]
         [Column("cpf_rate")]
-        public decimal? CPFRate { get; set; } = 20.00m;  // Default 20%
+        public decimal? CPFRate { get; set; } = 20.00m;
 
         [Display(Name = "Date Joined")]
         [DataType(DataType.Date)]
         [Column("date_joined")]
         public DateTime? DateJoined { get; set; }
-
-        //public Employee()
-        //{
-        //    Id = Guid.NewGuid().ToString();
-        //    DateJoined = DateTime.Now;
-        //    CPFRate = 20;
-        //    UserId = "dummy@sme.com"; // Default for testing
-        //}
     }
 }

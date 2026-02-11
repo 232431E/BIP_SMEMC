@@ -20,7 +20,7 @@ namespace BIP_SMEMC.Models
         public string Email { get; set; }
 
         [Display(Name = "NRIC")]
-        public string NRIC { get; set; }
+        public string? NRIC { get; set; } // CHANGED: Added ?
 
         [Required(ErrorMessage = "Position is required")]
         public string Position { get; set; }
@@ -45,5 +45,4 @@ namespace BIP_SMEMC.Models
         [DataType(DataType.Date)]
         public DateTime DateJoined { get; set; } = DateTime.Now;
     }
-
 }

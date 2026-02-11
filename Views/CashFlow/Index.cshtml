@@ -1,179 +1,157 @@
 ﻿@model BIP_SMEMC.Models.CashFlowViewModel
-@if (ViewBag.ErrorMessage != null)
-{
-    <div class="alert alert-warning border-2 shadow-sm mb-4">
-        <div class="d-flex align-items-center">
-            <i class="bi bi-cloud-slash-fill fs-3 me-3"></i>
-            <div>
-                <strong>Connectivity Issue:</strong> @ViewBag.ErrorMessage
-            </div>
-        </div>
-    </div>
-}
-<div class="container-fluid p-4">
+
+<div class="container-fluid p-4 bg-light min-vh-100">
     <div class="d-flex justify-content-between align-items-center mb-4">
         <div>
-            <h1 class="h3 mb-0 text-gray-800">AI Cash Flow Forecasting</h1>
-            <p class="text-muted">Visualize liquidity risks and simulate business decisions.</p>
+            <h1 class="h3 fw-bold text-dark mb-1">AI Cash Flow Forecasting</h1>
+            <p class="text-muted small mb-0">Visualize liquidity risks and simulate business scenarios.</p>
+        </div>
+        <div>
+            @if (ViewBag.ErrorMessage != null)
+            {
+                <span class="badge bg-warning text-dark"><i class="bi bi-exclamation-triangle me-1"></i> @ViewBag.ErrorMessage</span>
+            }
         </div>
     </div>
 
-    <div class="card border-0 shadow-sm mb-4 bg-light">
-        <div class="card-body">
-            <div class="d-flex align-items-center mb-2">
-                <i class="bi bi-robot text-primary me-2 fs-4"></i>
-                <h5 class="fw-bold m-0 text-primary">Gemini Financial Insight</h5>
-            </div>
-            <p class="mb-0 text-dark">
-                @if (!string.IsNullOrEmpty(Model.AIAnalysis))
-                {
-                    @Model.AIAnalysis
-                }
-                else
-                {
-                    <span class="text-muted fst-italic">Gathering insights...</span>
-                }
-            </p>
+    <div class="alert alert-primary border-0 shadow-sm d-flex align-items-center mb-4">
+        <i class="bi bi-robot fs-3 me-3"></i>
+        <div>
+            <h6 class="fw-bold mb-0">Gemini Financial Insight</h6>
+            <p class="mb-0 small">@(string.IsNullOrEmpty(Model.AIAnalysis) ? "Analyzing your latest transaction patterns..." : Model.AIAnalysis)</p>
         </div>
     </div>
 
-    @{
-        var shortfall = Model.ChartData.Where(d => d.Predicted < 0).FirstOrDefault();
-    }
-    @if (shortfall != null)
-    {
-        <div class="alert alert-danger border-start border-4 shadow-sm mb-4" role="alert">
-            <div class="d-flex align-items-center">
-                <i class="bi bi-exclamation-octagon-fill fs-3 me-3"></i>
-                <div>
-                    <h5 class="alert-heading mb-1">Liquidity Risk Detected!</h5>
-                    <p class="mb-0">
-                        Your balance is projected to fall below zero on <strong>@shortfall.Date</strong>.
-                        This represents a decrease of $@((Model.CurrentBalance - shortfall.Predicted.Value).ToString("N0")) from today.
-                    </p>
-                </div>
-            </div>
-        </div>
-    }
-    else
-    {
-        <div class="alert alert-success border-start border-4 shadow-sm mb-4">
-            <i class="bi bi-check-circle-fill me-2"></i> Your cash flow trend remains positive for the next 30 days.
-        </div>
-    }
+    <div class="card border-0 shadow-sm mb-4">
+        <div class="card-header bg-white py-3">
+            <div class="d-flex flex-column flex-md-row justify-content-between align-items-md-center gap-3">
+                <h6 class="fw-bold m-0"><i class="bi bi-graph-up me-2"></i>Cash Flow Projection</h6>
 
-    <div class="card shadow-sm mb-4">
-        <div class="card-body">
-            <canvas id="forecastChart" style="max-height: 400px;"></canvas>
-        </div>
-    </div>
-
-    <div class="accordion mb-4" id="calculationAccordion">
-        <div class="accordion-item shadow-sm">
-            <h2 class="accordion-header">
-                <button class="accordion-button collapsed fw-bold" type="button" data-bs-toggle="collapse" data-bs-target="#collapseCalc">
-                    <i class="bi bi-calculator me-2"></i> How is this calculated? (ML Model Details)
-                </button>
-            </h2>
-            <div id="collapseCalc" class="accordion-collapse collapse" data-bs-parent="#calculationAccordion">
-                <div class="accordion-body bg-light">
-                    <h6><strong>Prediction Logic:</strong> Advanced Linear Trend with Seasonality</h6>
-                    <p class="small text-muted">@ViewBag.AiJustification</p>
-                    <hr />
-                    <h6><strong>Formula Used:</strong></h6>
-                    <code>NewBalance = CurrentBalance + (SeasonalAvg / 30 * days) - (RecurringOutflows / 30 * days)</code>
-                    <ul class="mt-3 small">
-                        <li><strong>SeasonalAvg:</strong> Based on historical data for this specific month in previous years.</li>
-                        <li><strong>RecurringOutflows:</strong> Identified constant payments appearing 3+ times in your GL.</li>
-                    </ul>
-                </div>
-            </div>
-        </div>
-    </div>
-
-
-    <div class="row">
-        <div class="col-lg-6">
-            <div class="card shadow-sm h-100">
-                <div class="card-header bg-white fw-bold"><i class="bi bi-magic me-2"></i>What-If Scenario Simulator</div>
-                <div class="card-body">
-                    <div class="row g-3">
-                        <div class="col-md-6">
-                            <label class="form-label small">Expected Monthly Revenue ($)</label>
-                            <input type="number" id="scenRevenue" class="form-control" placeholder="e.g. 50000">
-                        </div>
-                        <div class="col-md-6">
-                            <label class="form-label small">Recurring Monthly Expense ($)</label>
-                            <input type="number" id="scenRecur" class="form-control" placeholder="e.g. 15000">
-                        </div>
-                        <div class="col-12">
-                            <label class="form-label small">Fixed One-Time Expense ($)</label>
-                            <input type="number" id="scenFixed" class="form-control" placeholder="e.g. 5000">
-                        </div>
-                        <div class="col-12">
-                            <button class="btn btn-primary w-100" onclick="updateScenario()">
-                                <i class="bi bi-play-fill me-1"></i>Run Simulation
-                            </button>
-                        </div>
+                <div class="d-flex align-items-center bg-light rounded p-1">
+                    <div class="btn-group btn-group-sm" role="group">
+                        <button type="button" class="btn btn-white border-0 fw-bold active" onclick="updateChartWindow(2, 1, this)">3M</button>
+                        <button type="button" class="btn btn-white border-0 fw-bold" onclick="updateChartWindow(5, 1, this)">6M</button>
+                        <button type="button" class="btn btn-white border-0 fw-bold" onclick="updateChartWindow(11, 1, this)">1Y</button>
+                    </div>
+                    <div class="vr mx-2"></div>
+                    <div class="d-flex gap-1">
+                        <input type="date" id="startDatePicker" class="form-control form-control-sm border-0 bg-transparent" style="width: 110px;">
+                        <span class="text-muted align-self-center">-</span>
+                        <input type="date" id="endDatePicker" class="form-control form-control-sm border-0 bg-transparent" style="width: 110px;">
+                        <button class="btn btn-sm btn-primary ms-1" onclick="applyCustomRange()"><i class="bi bi-check"></i></button>
                     </div>
                 </div>
             </div>
         </div>
+        <div class="card-body">
+            <div style="height: 400px; width: 100%;">
+                <canvas id="forecastChart"></canvas>
+            </div>
+        </div>
+    </div>
 
-        <div class="row">
-            <div class="col-lg-12">
-                <div class="card shadow-sm">
-                    <div class="card-header bg-white d-flex justify-content-between align-items-center">
-                        <span class="fw-bold"><i class="bi bi-newspaper me-2"></i>SME News Feed</span>
-                        <button class="btn btn-sm btn-outline-secondary" data-bs-toggle="modal" data-bs-target="#newsPrefsModal">
-                            <i class="bi bi-funnel"></i> Preferences
+    <div class="row g-4">
+
+        <div class="col-lg-4">
+            <div class="card border-0 shadow-sm h-100">
+                <div class="card-header bg-white py-3">
+                    <h6 class="fw-bold m-0 text-success"><i class="bi bi-sliders me-2"></i>What-If Simulator</h6>
+                </div>
+                <div class="card-body">
+                    <p class="small text-muted mb-4">Adjust parameters to see how they impact the prediction (Dashed Purple Line) in the selected view.</p>
+
+                    <div class="mb-3">
+                        <label class="form-label small fw-bold text-muted">Est. Monthly Revenue Addition</label>
+                        <div class="input-group">
+                            <span class="input-group-text bg-light border-end-0">$</span>
+                            <input type="number" id="scenRevenue" class="form-control border-start-0" placeholder="0">
+                        </div>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label small fw-bold text-muted">Est. Monthly Expense Increase</label>
+                        <div class="input-group">
+                            <span class="input-group-text bg-light border-end-0">$</span>
+                            <input type="number" id="scenRecur" class="form-control border-start-0" placeholder="0">
+                        </div>
+                    </div>
+
+                    <div class="mb-4">
+                        <label class="form-label small fw-bold text-muted">One-Time Capital Expenditure</label>
+                        <div class="input-group">
+                            <span class="input-group-text bg-light border-end-0">$</span>
+                            <input type="number" id="scenFixed" class="form-control border-start-0" placeholder="0">
+                        </div>
+                    </div>
+
+                    <div class="d-grid gap-2">
+                        <button class="btn btn-success" onclick="runSimulation()">
+                            <i class="bi bi-activity me-2"></i>Simulate Impact
+                        </button>
+                        <button class="btn btn-outline-secondary btn-sm" onclick="clearSimulation()">
+                            Reset
                         </button>
                     </div>
-                    <div class="card-body">
-                        <div class="row" id="newsContainer">
-                            @foreach (var news in Model.News)
-                            {
-                                <div class="col-md-4 mb-3">
-                                    <div class="p-3 border rounded h-100 bg-white">
-                                        <span class="badge bg-info mb-2">
-                                            @(news.Industries != null && news.Industries.Any() ? news.Industries.First() : "General")
-                                        </span>                                        <h6 class="fw-bold">@news.Title</h6>
-                                        <p class="extra-small text-muted">@news.Summary</p>
-                                        <a href="@news.Url" target="_blank" class="small">Read Full Article</a>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-lg-8">
+            <div class="card border-0 shadow-sm h-100">
+                <div class="card-header bg-white py-3 d-flex justify-content-between align-items-center">
+                    <h6 class="fw-bold m-0"><i class="bi bi-globe-asia-australia me-2"></i>Market Intelligence</h6>
+                    <button class="btn btn-sm btn-light border" data-bs-toggle="modal" data-bs-target="#newsPrefsModal">
+                        <i class="bi bi-funnel me-1"></i> Filter Interests
+                    </button>
+                </div>
+                <div class="card-body p-0">
+                    @if (ViewBag.Outlooks != null)
+                    {
+                        var outlooks = (List<BIP_SMEMC.Models.NewsOutlookModel>)ViewBag.Outlooks;
+                        if (outlooks.Any())
+                        {
+                            <div class="bg-primary bg-opacity-10 p-4 border-bottom">
+                                <h6 class="fw-bold text-primary mb-2">Executive Summary</h6>
+                                <p class="small text-dark mb-0">
+                                    @foreach (var o in outlooks)
+                                    {
+                                        <span class="d-block mb-2">
+                                            <strong>@o.Industry (@o.Region):</strong> @o.OutlookSummary
+                                        </span>
+                                    }
+                                </p>
+                            </div>
+                        }
+                    }
+
+                    <div style="max-height: 400px; overflow-y: auto;" class="p-3">
+                        <h6 class="small fw-bold text-muted mb-3 text-uppercase">Latest Curated News</h6>
+                        @foreach (var news in Model.News)
+                        {
+                            <div class="d-flex gap-3 mb-3 border-bottom pb-3">
+                                <div class="flex-shrink-0 text-center" style="width: 50px;">
+                                    <div class="bg-light rounded p-1 border">
+                                        <i class="bi bi-newspaper text-muted h4"></i>
                                     </div>
                                 </div>
-                            }
-                        </div>
+                                <div>
+                                    <h6 class="mb-1 fw-bold text-dark">
+                                        <a href="@news.Url" target="_blank" class="text-decoration-none text-dark hover-primary">@news.Title</a>
+                                    </h6>
+                                    <div class="mb-1">
+                                        @foreach (var tag in news.Industries ?? new List<string>())
+                                        {
+                                            <span class="badge bg-secondary bg-opacity-10 text-secondary extra-small border">@tag</span>
+                                        }
+                                    </div>
+                                    <p class="small text-muted mb-0">@news.Summary</p>
+                                </div>
+                            </div>
+                        }
                     </div>
                 </div>
             </div>
         </div>
-        @if (ViewBag.Outlooks != null)
-        {
-            <div class="row mt-4">
-                <h5 class="fw-bold"><i class="bi bi-graph-up-arrow me-2"></i>Market Outlook & Leaders</h5>
-                @foreach (var outlook in (List<BIP_SMEMC.Models.NewsOutlookModel>)ViewBag.Outlooks)
-                {
-                    <div class="col-md-6 mb-3">
-                        <div class="card border-left-primary shadow h-100 py-2">
-                            <div class="card-body">
-                                <div class="text-xs font-weight-bold text-primary text-uppercase mb-1">@outlook.Industry (@outlook.Region)</div>
-                                <p class="small text-dark">@outlook.OutlookSummary</p>
-                                <div class="bg-light p-2 rounded">
-                                    <span class="small fw-bold text-muted">Top 5 Influencers:</span>
-                                    <div class="d-flex flex-wrap gap-1 mt-1">
-                                        @foreach (var leader in outlook.TopLeaders ?? new List<string>())
-                                        {
-                                            <span class="badge badge-secondary text-dark border">@leader</span>
-                                        }
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                }
-            </div>
-        }
     </div>
 </div>
 
@@ -181,116 +159,263 @@
     <div class="modal-dialog">
         <div class="modal-content">
             <div class="modal-header">
-                <h5 class="modal-title">Edit Interests</h5>
+                <h5 class="modal-title fw-bold">Customize Intelligence Feed</h5>
                 <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
             </div>
             <div class="modal-body">
-                <p class="small text-muted mb-3">Select the industries and regions you want to monitor for AI Outlooks.</p>
-
-                <h6>Industries</h6>
-                <div class="row mb-3 px-2">
-                    @if (ViewBag.AllIndustries != null)
-                    {
-                        foreach (var ind in (List<BIP_SMEMC.Models.IndustryModel>)ViewBag.AllIndustries)
-                        {
-                            <div class="form-check col-6">
-                                <input class="form-check-input pref-industry" type="checkbox" value="@ind.Name"
-                                       @(Model.UserPreferences?.Industries?.Contains(ind.Name) == true ? "checked" : "")>
-                                <label class="form-check-label small">@ind.Name</label>
-                            </div>
-                        }
-                    }
-                </div>
-
-                <h6>Regions</h6>
-                <div class="row px-2">
-                    @if (ViewBag.AllRegions != null)
-                    {
-                        foreach (var reg in (List<BIP_SMEMC.Models.RegionModel>)ViewBag.AllRegions)
-                        {
-                            <div class="form-check col-6">
-                                <input class="form-check-input pref-region" type="checkbox" value="@reg.Name"
-                                       @(Model.UserPreferences?.Regions?.Contains(reg.Name) == true ? "checked" : "")>
-                                <label class="form-check-label small">@reg.Name</label>
-                            </div>
-                        }
-                    }
+                <p class="small text-muted mb-3">Select industries and regions to tailor your market outlook and news feed.</p>
+                <div class="row">
+                    <div class="col-6 border-end">
+                        <h6 class="small fw-bold text-uppercase text-muted">Industries</h6>
+                        <div class="d-flex flex-column gap-2">
+                            @if (ViewBag.AllIndustries != null)
+                            {
+                                foreach (var ind in (List<BIP_SMEMC.Models.IndustryModel>)ViewBag.AllIndustries)
+                                {
+                                    <div class="form-check">
+                                        <input class="form-check-input pref-industry" type="checkbox" value="@ind.Name"
+                                               @(Model.UserPreferences?.Industries?.Contains(ind.Name) == true ? "checked" : "")>
+                                        <label class="form-check-label small">@ind.Name</label>
+                                    </div>
+                                }
+                            }
+                        </div>
+                    </div>
+                    <div class="col-6 ps-4">
+                        <h6 class="small fw-bold text-uppercase text-muted">Regions</h6>
+                        <div class="d-flex flex-column gap-2">
+                            @if (ViewBag.AllRegions != null)
+                            {
+                                foreach (var reg in (List<BIP_SMEMC.Models.RegionModel>)ViewBag.AllRegions)
+                                {
+                                    <div class="form-check">
+                                        <input class="form-check-input pref-region" type="checkbox" value="@reg.Name"
+                                               @(Model.UserPreferences?.Regions?.Contains(reg.Name) == true ? "checked" : "")>
+                                        <label class="form-check-label small">@reg.Name</label>
+                                    </div>
+                                }
+                            }
+                        </div>
+                    </div>
                 </div>
             </div>
-            <div class="modal-footer bg-light">
-                <button type="button" class="btn btn-primary w-100" onclick="updatePreferences()">
-                    <i class="bi bi-save me-1"></i> Save Preferences
-                </button>
+            <div class="modal-footer bg-light border-0">
+                <button type="button" class="btn btn-primary w-100" onclick="updatePreferences()">Save Changes</button>
             </div>
         </div>
     </div>
 </div>
+
 @section Scripts {
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script>
-        const rawChartData = @Html.Raw(Json.Serialize(Model.ChartData));
+        // --- 1. DATA INITIALIZATION ---
+        const fullData = @Html.Raw(Json.Serialize(Model.ChartData));
+        const currentBalance = @Model.CurrentBalance;
+        let chartInstance = null;
 
-        console.group("Cash Flow Debugging");
-        console.log("Total Points:", rawChartData.length);
-        console.log("First Point Date:", rawChartData[0]?.date);
-        console.log("Current Balance from Model:", @Model.CurrentBalance);
-        console.groupEnd();
+        // Find the "Latest Actual" date to anchor our view
+        const lastActualItem = fullData.filter(d => d.actual !== null).pop();
+        // Fallback to today if no data
+        const anchorDate = lastActualItem ? new Date(lastActualItem.date) : new Date();
 
-                function initChart(data) {
+        document.addEventListener("DOMContentLoaded", () => {
+            // Default View: 3M button (2 Months Back, 1 Month Forward)
+            updateChartWindow(2, 1, document.querySelectorAll('.btn-group button')[0]);
+        });
+
+        // --- 2. CHART RENDERING ENGINE ---
+        function renderChart(filteredData, simulatedData = null) {
             const ctx = document.getElementById('forecastChart').getContext('2d');
-            if (window.myChart) window.myChart.destroy();
+            if (chartInstance) chartInstance.destroy();
 
-            window.myChart = new Chart(ctx, {
+            const datasets = [
+                {
+                    label: 'Actual Balance',
+                    data: filteredData.map(d => d.actual),
+                    borderColor: '#0d6efd',
+                    backgroundColor: 'rgba(13, 110, 253, 0.1)',
+                    pointRadius: 2,
+                    tension: 0.3,
+                    fill: true
+                },
+                {
+                    label: 'AI Prediction',
+                    data: filteredData.map(d => d.predicted),
+                    borderColor: '#6610f2', // Purple
+                    borderDash: [5, 5],
+                    pointRadius: 0,
+                    tension: 0.3,
+                    fill: false
+                }
+            ];
+
+            // Add Simulation Line if active
+            if (simulatedData) {
+                datasets.push({
+                    label: 'Simulated Outcome',
+                    data: simulatedData,
+                    borderColor: '#198754', // Green
+                    borderWidth: 2,
+                    pointRadius: 3,
+                    pointBackgroundColor: '#198754',
+                    tension: 0.3,
+                    fill: false
+                });
+            }
+
+            chartInstance = new Chart(ctx, {
                 type: 'line',
                 data: {
-                    labels: data.map(d => d.date),
-                    datasets: [
-                        {
-                            label: 'Actuals',
-                            data: data.map(d => d.actual),
-                            borderColor: '#0d6efd',
-                            pointRadius: 3,        // Make points visible
-                            hitRadius: 20,         // Large area for clicking
-                            hoverRadius: 7         // Visual feedback on hover
-                        },
-                        {
-                            label: 'AI Prediction',
-                            data: data.map(d => d.predicted),
-                            borderDash: [5,5],
-                            borderColor: '#6610f2',
-                            pointRadius: 0,        // Keep prediction lines clean
-                            hitRadius: 20
-                        }
-                    ]
+                    labels: filteredData.map(d => new Date(d.date).toLocaleDateString()),
+                    datasets: datasets
                 },
                 options: {
-                    onClick: (e, elements) => {
-                        if (elements.length > 0) {
-                            const index = elements[0].index;
-                            const date = data[index].date;
-                            console.log("Point Clicked:", date);
-                            // Add your drill-down or modal logic here
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    interaction: { mode: 'index', intersect: false },
+                    plugins: {
+                        legend: { display: true, position: 'top' },
+                        tooltip: {
+                            callbacks: {
+                                label: function(context) {
+                                    let label = context.dataset.label || '';
+                                    if (label) label += ': ';
+                                    if (context.parsed.y !== null) {
+                                        label += new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(context.parsed.y);
+                                    }
+                                    return label;
+                                }
+                            }
                         }
                     },
                     scales: {
-                        x: {
-                            ticks: {
-                                autoSkip: true,
-                                maxTicksLimit: 10 // Prevents date crowding
-                            }
+                        x: { grid: { display: false } },
+                        y: {
+                            beginAtZero: false,
+                            grid: { borderDash: [5, 5] },
+                            ticks: { callback: (val) => '$' + val / 1000 + 'k' }
                         }
                     }
                 }
             });
         }
-        initChart(rawChartData);
 
+        // --- 3. FILTER LOGIC (UPDATED TO "HISTORY + PREDICTION" PATTERN) ---
+        function updateChartWindow(monthsBack, monthsForward, btnElement) {
+            // Update UI
+            if(btnElement) {
+                document.querySelectorAll('.btn-group button').forEach(b => b.classList.remove('active'));
+                btnElement.classList.add('active');
+            }
+
+            // Calculate Start Date (Anchor - Months Back)
+            const startDate = new Date(anchorDate);
+            startDate.setMonth(startDate.getMonth() - monthsBack);
+
+            // Calculate End Date (Anchor + Months Forward)
+            const endDate = new Date(anchorDate);
+            endDate.setMonth(endDate.getMonth() + monthsForward);
+
+            // Filter the full dataset
+            const filtered = fullData.filter(d => {
+                const dDate = new Date(d.date);
+                return dDate >= startDate && dDate <= endDate;
+            });
+
+            renderChart(filtered);
+
+            // Re-run simulation if active to match new window
+            if(document.getElementById('scenRevenue').value) runSimulation();
+        }
+
+        function applyCustomRange() {
+            const start = new Date(document.getElementById('startDatePicker').value);
+            const end = new Date(document.getElementById('endDatePicker').value);
+
+            if(isNaN(start) || isNaN(end)) { alert("Please select valid dates"); return; }
+
+            const filtered = fullData.filter(d => {
+                const date = new Date(d.date);
+                return date >= start && date <= end;
+            });
+
+            document.querySelectorAll('.btn-group button').forEach(b => b.classList.remove('active'));
+            renderChart(filtered);
+        }
+
+        // --- 4. SIMULATION LOGIC ---
+        function runSimulation() {
+            // 1. Get Inputs
+            const revIncrease = parseFloat(document.getElementById('scenRevenue').value) || 0;
+            const expIncrease = parseFloat(document.getElementById('scenRecur').value) || 0;
+            const oneTimeCost = parseFloat(document.getElementById('scenFixed').value) || 0;
+            const netMonthlyChange = revIncrease - expIncrease;
+
+            // 2. Get Current Chart Data
+            const basePredictions = chartInstance.data.datasets[1].data; // Index 1 is AI Prediction
+
+            const simulatedData = [];
+
+            // 3. Calculate Simulation Line
+            // Find index in current VIEW where prediction line starts
+            let startIdx = basePredictions.findIndex(val => val !== null);
+
+            if (startIdx === -1) {
+                alert("Please select a range that includes future dates to run a simulation.");
+                return;
+            }
+
+            for (let i = 0; i < basePredictions.length; i++) {
+                if (i < startIdx) {
+                    simulatedData.push(null); // No sim for historical part
+                } else {
+                    // Calculate months passed since start of prediction
+                    const daysPassed = i - startIdx;
+                    const monthsPassed = daysPassed / 30; // Approx 30 days/month
+
+                    // Formula: Original_Pred + (NetChange * Months) - OneTimeCost
+                    let newVal = basePredictions[i] + (netMonthlyChange * monthsPassed) - oneTimeCost;
+                    simulatedData.push(newVal);
+                }
+            }
+
+            // 4. Update Chart
+            // Remove old simulation if exists
+            const existingSimIdx = chartInstance.data.datasets.findIndex(ds => ds.label === 'Simulated Outcome');
+            if (existingSimIdx !== -1) chartInstance.data.datasets.splice(existingSimIdx, 1);
+
+            chartInstance.data.datasets.push({
+                label: 'Simulated Outcome',
+                data: simulatedData,
+                borderColor: '#198754',
+                borderWidth: 2,
+                pointRadius: 0,
+                borderDash: [2, 2],
+                tension: 0.3,
+                fill: false
+            });
+
+            chartInstance.update();
+        }
+
+        function clearSimulation() {
+            document.getElementById('scenRevenue').value = '';
+            document.getElementById('scenRecur').value = '';
+            document.getElementById('scenFixed').value = '';
+
+            const existingSimIdx = chartInstance.data.datasets.findIndex(ds => ds.label === 'Simulated Outcome');
+            if (existingSimIdx !== -1) {
+                chartInstance.data.datasets.splice(existingSimIdx, 1);
+                chartInstance.update();
+            }
+        }
+
+        // --- 5. PREFERENCES AJAX ---
         async function updatePreferences() {
             const industries = Array.from(document.querySelectorAll('.pref-industry:checked')).map(cb => cb.value);
             const regions = Array.from(document.querySelectorAll('.pref-region:checked')).map(cb => cb.value);
-
             const formData = new URLSearchParams();
-            // Use the exact parameter names from the C# method: 'industries' and 'regions'
             industries.forEach(val => formData.append('industries', val));
             regions.forEach(val => formData.append('regions', val));
 
@@ -301,14 +426,8 @@
             });
 
             const result = await response.json();
-            if (result.success) {
-                location.reload();
-            } else {
-                console.error("Save failed:", result.error);
-                alert("Failed to save. Check Debug console.");
-            }
+            if (result.success) location.reload();
+            else alert("Failed to save.");
         }
-        
-                            
     </script>
 }

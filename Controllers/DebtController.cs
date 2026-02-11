@@ -52,6 +52,7 @@ namespace BIP_SMEMC.Controllers
             // Validation Cleanup
             ModelState.Remove("Id");
             ModelState.Remove("Description");
+            ModelState.Remove("UserId");
 
             if (debt.DueDate <= debt.StartDate)
                 ModelState.AddModelError("DueDate", "Due date must be after start date");
@@ -86,11 +87,14 @@ namespace BIP_SMEMC.Controllers
         [ValidateAntiForgeryToken]
         public async Task<IActionResult> Edit(DebtModel debt)
         {
+            var userEmail = User.Identity?.Name ?? "dummy@sme.com";
             ModelState.Remove("Description");
+            ModelState.Remove("UserId");
             if (!ModelState.IsValid) return View(debt);
 
             try
             {
+                debt.UserId = userEmail;
                 await _debtService.UpdateDebt(debt);
                 TempData["SuccessMessage"] = "Debt updated successfully!";
                 return RedirectToAction("Index");

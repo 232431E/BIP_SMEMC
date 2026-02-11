@@ -9,116 +9,120 @@ namespace BIP_SMEMC.Services
 {
     public class GeminiService
     {
-        private readonly string _apiKey = "AIzaSyAiLClWYM9KJ9VT98c_dIG4WdCU4JnAahs";
         private readonly HttpClient _http;
+        private readonly string _apiKey;
+        // Using v1beta as it is standard for 1.5-flash. 
+        private const string BaseUrl = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent";
+        public GeminiService(HttpClient http, IConfiguration config)
+        {
+            _http = http;
+            _apiKey = config["Gemini:ApiKey"];
+        }
 
-        public GeminiService(HttpClient http) => _http = http;
         public async Task<List<NewsOutlookModel>> GenerateIndustryOutlooks(List<NewsArticleModel> articles, List<string> industries, List<string> regions)
         {
-            var url = $"https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key={_apiKey}";
+            // CRITICAL FIX: Append API Key here
+            var url = $"{BaseUrl}?key={_apiKey}";
 
-            // Batch all articles into one context string
-            var context = string.Join("\n", articles.Take(15).Select(a => $"Headline: {a.Title} | Tags: {string.Join(",", a.Industries)}"));
-            Debug.WriteLine("--- [GEMINI PROMPT CONTEXT] ---");
-            Debug.WriteLine(context);
-            Debug.WriteLine("-------------------------------");
-            var promptText = $@"You are a Strategic Market Analyst. Using these headlines:
-    {context}
+            // 1. Build Rich Context
+            var contextBuilder = new StringBuilder();
+            // Limiting to 15 articles to avoid token limits, prioritizing those with diverse tags if possible
+            foreach (var a in articles.Take(15))
+            {
+                contextBuilder.AppendLine($"--- NEWS ITEM ---");
+                contextBuilder.AppendLine($"Headline: {a.Title}");
+                contextBuilder.AppendLine($"Summary: {a.Summary}"); // Included Summary
+                contextBuilder.AppendLine($"Source: {a.Source} | Link: {a.Url}"); // Included Link
+                contextBuilder.AppendLine($"Tags: {string.Join(", ", a.Industries)}");
+                contextBuilder.AppendLine();
+            }
 
-    For each unique combination of Industry: [{string.Join(",", industries)}] and Region: [{string.Join(",", regions)}] found:
-    1. Generate an 'outlook_summary' (3 sentences on SME impact).
-    2. Rank 'top_leaders': List the top 5 influential companies or figures.
-    
-    Return ONLY a valid JSON array of objects:
-    [{{ ""industry"": """", ""region"": """", ""outlook_summary"": """", ""top_leaders"": [""Company A"", ""Person B""] }}]";
+            // 2. Enhanced Prompt
+            var promptText = $@"
+Role: Strategic Market Analyst.
+Context Data (News Articles):
+{contextBuilder}
 
-            var request = new { contents = new[] { new { parts = new[] { new { text = promptText } } } } };
-            var response = await _http.PostAsync(url, new StringContent(JsonConvert.SerializeObject(request), Encoding.UTF8, "application/json"));
-            var json = await response.Content.ReadAsStringAsync();
+Task:
+Analyze the provided news. Use the links and summaries to infer deeper market trends. 
+You may use your internal knowledge to supplement the 'Outlook' if the news is sparse, but prioritize the provided context.
 
-            return ParseOutlookResponse(json);
+Requirements:
+For unique Industry/Region combinations found in the context (matching: Industries [{string.Join(",", industries)}] and Regions [{string.Join(",", regions)}]):
+
+1. 'outlook_summary': A 3-sentence strategic summary for SMEs in that sector/region.
+2. 'top_leaders': Top 5 companies or figures mentioned or relevant to this trend.
+
+Format:
+Return ONLY a valid JSON array. No markdown formatting.
+Example: [{{ ""industry"": ""Tech"", ""region"": ""Global"", ""outlook_summary"": ""..."", ""top_leaders"": [""A"",""B""] }}]";
+
+            var requestBody = new { contents = new[] { new { parts = new[] { new { text = promptText } } } } };
+            var jsonContent = JsonConvert.SerializeObject(requestBody);
+
+            // DEBUG: Log what we are sending
+            Debug.WriteLine("------------------------------------------------");
+            Debug.WriteLine($"[GEMINI REQ] URL: {BaseUrl}..."); // Don't log full key
+            Debug.WriteLine($"[GEMINI REQ] Prompt Length: {promptText.Length} chars");
+            // Debug.WriteLine($"[GEMINI REQ] Payload: {jsonContent}"); // Uncomment to see full payload
+            Debug.WriteLine("------------------------------------------------");
+
+            try
+            {
+                var response = await _http.PostAsync(url, new StringContent(jsonContent, Encoding.UTF8, "application/json"));
+
+                if (!response.IsSuccessStatusCode)
+                {
+                    // DEBUG: Log the exact error from Google
+                    var errorJson = await response.Content.ReadAsStringAsync();
+                    Debug.WriteLine($"[GEMINI HTTP ERROR] Status: {response.StatusCode}");
+                    Debug.WriteLine($"[GEMINI ERROR BODY] {errorJson}");
+                    return new List<NewsOutlookModel>();
+                }
+
+                var jsonResponse = await response.Content.ReadAsStringAsync();
+                return ParseOutlookResponse(jsonResponse);
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"[GEMINI EXCEPTION] {ex.Message}");
+                return new List<NewsOutlookModel>();
+            }
         }
+
         private List<NewsOutlookModel> ParseOutlookResponse(string json)
         {
             try
             {
-                Debug.WriteLine($"[GEMINI RAW] {json}"); // Log full response
-
+                Debug.WriteLine($"[GEMINI RES] Raw Length: {json.Length}");
                 var obj = JObject.Parse(json);
-
-                // Check if Gemini blocked the prompt or returned an error
-                if (obj["error"] != null)
-                {
-                    Debug.WriteLine($"[GEMINI API ERROR] {obj["error"]["message"]}");
-                    return new List<NewsOutlookModel>();
-                }
 
                 var text = obj["candidates"]?[0]?["content"]?["parts"]?[0]?["text"]?.ToString();
                 if (string.IsNullOrEmpty(text))
                 {
-                    Debug.WriteLine("[GEMINI ERROR] Empty response content. Gemini might have blocked the content.");
+                    Debug.WriteLine("[GEMINI RES] No text candidate returned.");
                     return new List<NewsOutlookModel>();
                 }
 
-                string cleanJson = Regex.Replace(text, "```json|```", "").Trim();
+                // Clean Markdown code blocks if present
+                string cleanJson = Regex.Replace(text, @"^```json\s*|\s*```$", "", RegexOptions.IgnoreCase | RegexOptions.Multiline).Trim();
+
                 var outlooks = JsonConvert.DeserializeObject<List<NewsOutlookModel>>(cleanJson);
+                Debug.WriteLine($"[GEMINI RES] Successfully deserialized {outlooks?.Count} outlooks.");
                 return outlooks ?? new List<NewsOutlookModel>();
             }
             catch (Exception ex)
             {
                 Debug.WriteLine($"[GEMINI PARSE ERROR] {ex.Message}");
+                Debug.WriteLine($"[RAW WAS] {json}"); // Log raw to see why parse failed
                 return new List<NewsOutlookModel>();
             }
-        }
-        public async Task<List<NewsArticleModel>> ProcessNewsBatch(string rawHeadlines, List<string> industries, List<string> regions)
-        {
-    //        var url = $"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={_apiKey}";
-
-    //        // BATCH PROMPT: Request summaries for all articles at once
-    //        var promptText = $@"Analyze the following business headlines. 
-    //1. Summarize the top 10 relevant to SMEs.
-    //2. Provide a 1-sentence 'Outlook' for the industry.
-    //3. Return ONLY a JSON array. 
-    //Format: [{{""title"": """", ""summary"": """", ""url"": """", ""industries"": [], ""regions"": []}}]
-    //Data: {rawHeadlines}";
-
-    //        var request = new { contents = new[] { new { parts = new[] { new { text = promptText } } } } };
-    //        var jsonBody = JsonConvert.SerializeObject(request);
-
-    //        var response = await _http.PostAsync(url, new StringContent(jsonBody, Encoding.UTF8, "application/json"));
-    //        var result = await response.Content.ReadAsStringAsync();
-
-            return new List<NewsArticleModel>();
-        }
-        public async Task<List<NewsOutlookModel>> GenerateBatchOutlooks(List<NewsArticleModel> articles, List<string> industries, List<string> regions)
-        {
-            // Change from v1beta to v1 and use the latest alias
-            var url = $"https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash-latest:generateContent?key={_apiKey}";
-            // Group all news into a context string
-            var context = string.Join("\n", articles.Select(a => $"- {a.Title}: {a.Summary} (Source: {a.Source})"));
-
-            var promptText = $@"You are a Strategic SME Consultant. Analyze this news context:
-    {context}
-
-    For each Industry: [{string.Join(",", industries)}] in Region: [{string.Join(",", regions)}]:
-    1. Summarize current SME impact (outlook_summary).
-    2. Identify 'key_events' (impactful regulatory or market shifts).
-    3. Rank 'top_leaders': List the top 5 influential companies or figures in that specific niche.
-    
-    Return ONLY a JSON array. Format: [{{""industry"":"""", ""region"":"""", ""outlook_summary"":"""", ""key_events"":"""", ""top_leaders"":[""1"",""2""]}}]";
-
-            var request = new { contents = new[] { new { parts = new[] { new { text = promptText } } } } };
-            var response = await _http.PostAsync(url, new StringContent(JsonConvert.SerializeObject(request), Encoding.UTF8, "application/json"));
-            var json = await response.Content.ReadAsStringAsync();
-
-            return ParseOutlookResponse(json);
         }
 
         public async Task<string> AnalyzeFinancialTrends(List<TransactionModel> history)
         {
-            var url = $"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={_apiKey}";
+            var url = $"{BaseUrl}?key={_apiKey}";
 
-            // 1. Aggregation (Reduce Tokens)
             var monthlyStats = history
                 .GroupBy(t => t.Date.ToString("MMM yyyy"))
                 .Select(g => new {
@@ -126,28 +130,35 @@ namespace BIP_SMEMC.Services
                     Net = g.Sum(t => t.Credit - t.Debit),
                     In = g.Sum(t => t.Credit),
                     Out = g.Sum(t => t.Debit)
-                })
-                .ToList();
+                }).ToList();
 
             var summaryJson = JsonConvert.SerializeObject(monthlyStats);
 
-            // 2. Efficient Prompt
             var promptText = $@"
-    Act as a Financial Analyst. Here is the monthly cashflow summary for an SME:
-    {summaryJson}
+Act as a Financial Analyst. Here is the monthly cashflow summary:
+{summaryJson}
 
-    Task:
-    1. Identify the trend (Growing, Declining, or Stable).
-    2. Point out the worst performing month.
-    3. Give 1 specific recommendation to improve cashflow based on this data.
-    
-    Keep response under 50 words. Plain text only.";
+Task:
+1. Identify the trend (Growing/Declining).
+2. Point out the worst month.
+3. Give 1 specific recommendation.
+Keep it under 50 words.";
+
+            Debug.WriteLine($"[GEMINI REQ] AnalyzeTrends for {monthlyStats.Count} months.");
 
             var request = new { contents = new[] { new { parts = new[] { new { text = promptText } } } } };
 
             try
             {
                 var response = await _http.PostAsync(url, new StringContent(JsonConvert.SerializeObject(request), Encoding.UTF8, "application/json"));
+
+                if (!response.IsSuccessStatusCode)
+                {
+                    var err = await response.Content.ReadAsStringAsync();
+                    Debug.WriteLine($"[GEMINI TRENDS ERROR] {response.StatusCode}: {err}");
+                    return "AI service unavailable.";
+                }
+
                 var json = await response.Content.ReadAsStringAsync();
                 var obj = JObject.Parse(json);
                 var text = obj["candidates"]?[0]?["content"]?["parts"]?[0]?["text"]?.ToString();
@@ -155,8 +166,8 @@ namespace BIP_SMEMC.Services
             }
             catch (Exception ex)
             {
-                Debug.WriteLine($"[AI ERROR] {ex.Message}");
-                return "AI Analysis could not be generated at this time.";
+                Debug.WriteLine($"[AI TRENDS EXCEPTION] {ex.Message}");
+                return "AI Analysis error.";
             }
         }
     }

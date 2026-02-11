@@ -1,6 +1,7 @@
 ﻿using BIP_SMEMC.Models;
 using Newtonsoft.Json.Linq;
 using System.Diagnostics;
+using System.Xml.Linq;
 
 namespace BIP_SMEMC.Services
 {
@@ -8,46 +9,42 @@ namespace BIP_SMEMC.Services
     {
         private readonly IServiceProvider _services;
         private readonly HttpClient _http;
-        private const string GuardianKey = "e43ea3b9-209a-43cd-801a-16051f6678f6";
+        private readonly IConfiguration _config;
 
-        public NewsBGService(IServiceProvider services, HttpClient http)
+        public NewsBGService(IServiceProvider services, HttpClient http, IConfiguration config)
         {
             _services = services;
             _http = http;
+            _config = config;
         }
+
         public async Task TriggerNewsCycle()
         {
-            // Create a scope to resolve Scoped services (Seeder and Supabase)
             using (var scope = _services.CreateScope())
             {
-                // Resolve Scoped services inside the using block
                 var db = scope.ServiceProvider.GetRequiredService<Supabase.Client>();
-                var seederService = scope.ServiceProvider.GetRequiredService<CategorySeederService>();
+                var ai = scope.ServiceProvider.GetRequiredService<GeminiService>();
+                var seeder = scope.ServiceProvider.GetRequiredService<CategorySeederService>();
 
-                await seederService.EnsureIndustriesAndRegionsExist();
-
-                // 2. Load them for tagging
-                var industries = await db.From<IndustryModel>().Get();
-                var regions = await db.From<RegionModel>().Get();
-
-                Debug.WriteLine($"[DB] Loaded {industries.Models.Count} industries and {regions.Models.Count} regions.");
+                await seeder.EnsureIndustriesAndRegionsExist();
+                await RunDailyNewsCycle(db, ai);
             }
         }
+
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
         {
+            await Task.Delay(5000, stoppingToken);
+
             while (!stoppingToken.IsCancellationRequested)
             {
-                var nowSgt = DateTime.UtcNow.AddHours(8);
-                var nextRun = DateTime.Today.AddHours(11);
-                if (nowSgt > nextRun) nextRun = nextRun.AddDays(1);
-                await Task.Delay(nextRun - nowSgt, stoppingToken);
+                await TriggerNewsCycle();
 
-                using (var scope = _services.CreateScope())
-                {
-                    var db = scope.ServiceProvider.GetRequiredService<Supabase.Client>();
-                    var ai = scope.ServiceProvider.GetRequiredService<GeminiService>();
-                    await RunDailyNewsCycle(db, ai);
-                }
+                var now = DateTime.UtcNow.AddHours(8);
+                var nextRun = now.Date.AddDays(1).AddHours(8);
+                var delay = nextRun - now;
+
+                Debug.WriteLine($"[NEWS BG] Next run in {delay.TotalHours:F1} hours");
+                await Task.Delay(delay, stoppingToken);
             }
         }
 
@@ -55,117 +52,176 @@ namespace BIP_SMEMC.Services
         {
             try
             {
-                Debug.WriteLine("--- [START] Manual News Cycle Triggered ---");                // PHASE 1: RETRIEVAL & STORAGE
-                var industryLookups = (await db.From<IndustryModel>().Get()).Models;
-                var regionLookups = (await db.From<RegionModel>().Get()).Models;
-                Debug.WriteLine($"[DB] Loaded {industryLookups.Count} industries and {regionLookups.Count} regions for tagging.");
-                // PHASE 1: Retrieval
+                Debug.WriteLine("--- [START] News Cycle Debugger ---");
+
+                // 1. Fetch Source Data
                 var rawArticles = await FetchMultiSourceNews();
-                Debug.WriteLine($"[FETCH] Retrieved {rawArticles.Count} total raw articles.");
                 if (!rawArticles.Any())
                 {
-                    Debug.WriteLine("[WARN] No articles were returned from any external source.");
+                    Debug.WriteLine("[WARN] No articles found from any source.");
                     return;
                 }
-                // PHASE 2: Tagging & Fallback Logic
-                var taggedArticles = LocalKeywordTagging(rawArticles, industryLookups, regionLookups);
-                
-                // Retention: Remove news older than 7 days
-                // PHASE 3: Fixed Persistence (Avoid LINQ Where for Delete)
-                Debug.WriteLine("[DB] Cleaning up old news...");
-                // Use string-based Filter to avoid NotImplementedException
-                await db.From<NewsArticleModel>()
-                    .Filter("date", Postgrest.Constants.Operator.LessThan, DateTime.Today.AddDays(-2).ToString("yyyy-MM-dd"))
-                    .Delete();
-                Debug.WriteLine($"[DB] Saving {taggedArticles.Count} new articles...");
-                var insertResult = await db.From<NewsArticleModel>().Insert(taggedArticles);
-                Debug.WriteLine($"[SUPABASE] Successfully saved {insertResult.Models.Count} articles.");// PHASE 2: AI OUTLOOK BATCH
-                                                                                                        // PHASE 4: AI Outlook with Gemini
-                Debug.WriteLine("[AI] Calling Gemini for Market Outlook...");
-                var outlooks = await ai.GenerateIndustryOutlooks(taggedArticles,
-                    industryLookups.Select(i => i.Name).ToList(),
-                    regionLookups.Select(r => r.Name).ToList());
+
+                // 2. Load Tags
+                var industries = (await db.From<IndustryModel>().Get()).Models;
+                var regions = (await db.From<RegionModel>().Get()).Models;
+
+                // 3. Tag Articles
+                var taggedArticles = LocalKeywordTagging(rawArticles, industries, regions);
+
+                // 4. CLEANUP: Delete old news
+                try
+                {
+                    var cutoffDate = DateTime.UtcNow.AddDays(-7).ToString("yyyy-MM-dd");
+                    await db.From<NewsArticleModel>()
+                        .Filter("date", Postgrest.Constants.Operator.LessThan, cutoffDate)
+                        .Delete();
+                }
+                catch (Exception ex) { Debug.WriteLine($"[CLEANUP WARN] {ex.Message}"); }
+
+                // 5. CRITICAL FIX: SAFE INSERT LOOP
+                // Instead of batch Upsert which fails on conflict if constraints aren't perfect,
+                // we check existence and insert only new ones.
+                var uniqueArticles = taggedArticles
+                    .GroupBy(x => x.Url)
+                    .Select(g => g.First())
+                    .ToList();
+
+                Debug.WriteLine($"[DB PRE-SAVE] Processing {uniqueArticles.Count} articles...");
+
+                int savedCount = 0;
+                foreach (var art in uniqueArticles)
+                {
+                    try
+                    {
+                        // 1. Check if URL exists
+                        var exists = await db.From<NewsArticleModel>()
+                            .Select("id") // Select minimal data
+                            .Filter("url", Postgrest.Constants.Operator.Equals, art.Url)
+                            .Get();
+
+                        if (exists.Models.Count == 0)
+                        {
+                            // 2. Insert if new
+                            await db.From<NewsArticleModel>().Insert(art);
+                            savedCount++;
+                            Debug.WriteLine($" -> Saved: {art.Title.Substring(0, Math.Min(20, art.Title.Length))}...");
+                        }
+                        else
+                        {
+                            Debug.WriteLine($" -> Skipped (Exists): {art.Title.Substring(0, Math.Min(20, art.Title.Length))}...");
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        // Log but continue loop so one bad apple doesn't kill the batch
+                        Debug.WriteLine($"[INSERT ERROR] {art.Url}: {ex.Message}");
+                    }
+                }
+
+                Debug.WriteLine($"[DB SUCCESS] Saved {savedCount} new articles.");
+                // 6. AI Generation
+                Debug.WriteLine("[AI] Starting Outlook Generation...");
+                var outlooks = await ai.GenerateIndustryOutlooks(uniqueArticles,
+                    industries.Select(i => i.Name).ToList(),
+                    regions.Select(r => r.Name).ToList());
 
                 if (outlooks != null && outlooks.Any())
                 {
+                    // Clear old outlooks before adding new ones
                     await db.From<NewsOutlookModel>().Delete();
                     await db.From<NewsOutlookModel>().Insert(outlooks);
-                    Debug.WriteLine($"[AI SUCCESS] Saved {outlooks.Count} outlooks.");
+                    Debug.WriteLine($"[AI SUCCESS] Saved {outlooks.Count} industry outlooks.");
                 }
             }
             catch (Exception ex)
             {
-                Debug.WriteLine($"[CRITICAL NEWS SERVICE ERROR] {ex.Message}");
-                // More specific logging for Supabase errors
-                if (ex.InnerException != null) Debug.WriteLine($"[INNER ERROR] {ex.InnerException.Message}");
-                throw;
+                Debug.WriteLine($"[NEWS SERVICE ERROR] {ex.Message}");
+                if (ex.InnerException != null) Debug.WriteLine($"[INNER] {ex.InnerException.Message}");
             }
         }
 
         private async Task<List<NewsArticleModel>> FetchMultiSourceNews()
         {
-            var allArticles = new List<NewsArticleModel>();
+            var articles = new List<NewsArticleModel>();
+            var apiKey = _config["NewsApi:GuardianKey"];
 
-            // Source 1: The Guardian
-            Debug.WriteLine("[SOURCE] Hitting Guardian API...");
-            // FIX: Added 'order-by=newest' to get fresh news
-            string url = $"[https://content.guardianapis.com/search?section=business&q=SME%20Asia&order-by=newest&api-key=](https://content.guardianapis.com/search?section=business&q=SME%20Asia&order-by=newest&api-key=){GuardianKey}";
+            // GUARDIAN
+            // Added 'show-fields=trailText' to get summaries
+            string guardianUrl = $"https://content.guardianapis.com/search?section=business&q=economy&order-by=newest&show-fields=trailText&page-size=30&api-key={apiKey}";
             try
             {
-                var guardianJson = await _http.GetStringAsync(url);
-                var guardianList = ParseGuardian(guardianJson);
-                Debug.WriteLine($"[EXTRACTED] Found {guardianList.Count} articles from The Guardian.");
-                foreach (var art in guardianList)
-                    Debug.WriteLine($" -> Headline: {art.Title} | URL: {art.Url}");
-
-                allArticles.AddRange(guardianList);
-                // Source 2: Yahoo Finance (via RSS or generic business search)
-                // YahooFinanceClient is typically for quotes; for news we use the public RSS feeds
-                var yahooRes = await _http.GetStringAsync("https://finance.yahoo.com/news/rssindex");
-                // Basic parsing logic for RSS would go here
-
+                Debug.WriteLine($"[HTTP] GET Guardian...");
+                var json = await _http.GetStringAsync(guardianUrl);
+                var jObj = JObject.Parse(json);
+                int count = 0;
+                foreach (var result in jObj["response"]["results"])
+                {
+                    articles.Add(new NewsArticleModel
+                    {
+                        Title = result["webTitle"]?.ToString(),
+                        Url = result["webUrl"]?.ToString(),
+                        Source = "The Guardian",
+                        Summary = result["fields"]?["trailText"]?.ToString() ?? result["webTitle"]?.ToString(), // Fallback to title
+                        Date = DateTime.UtcNow
+                    });
+                    count++;
+                }
+                Debug.WriteLine($"[GUARDIAN] Parsed {count} articles.");
             }
-            catch (Exception ex)
+            catch (Exception ex) { Debug.WriteLine($"[Guardian Fail] {ex.Message}"); }
+
+            // YAHOO RSS
+            try
             {
-                Debug.WriteLine($"[GUARDIAN ERROR] {ex.Message}");
-            }
+                var rssUrl = "https://finance.yahoo.com/news/rssindex";
+                Debug.WriteLine($"[HTTP] GET Yahoo RSS...");
+                var rssXml = await _http.GetStringAsync(rssUrl);
+                var doc = XDocument.Parse(rssXml);
 
-            
-            return allArticles;
+                var items = doc.Descendants("item").Take(20);
+                int count = 0;
+                foreach (var item in items)
+                {
+                    string rawDesc = item.Element("description")?.Value ?? "";
+                    // Remove HTML tags from Yahoo description
+                    string cleanDesc = System.Text.RegularExpressions.Regex.Replace(rawDesc, "<.*?>", String.Empty);
+
+                    articles.Add(new NewsArticleModel
+                    {
+                        Title = item.Element("title")?.Value,
+                        Url = item.Element("link")?.Value,
+                        Source = "Yahoo Finance",
+                        Summary = cleanDesc.Length > 200 ? cleanDesc.Substring(0, 197) + "..." : cleanDesc,
+                        Date = DateTime.UtcNow
+                    });
+                    count++;
+                }
+                Debug.WriteLine($"[YAHOO] Parsed {count} articles.");
+            }
+            catch (Exception ex) { Debug.WriteLine($"[Yahoo Fail] {ex.Message}"); }
+
+            return articles;
         }
 
         private List<NewsArticleModel> LocalKeywordTagging(List<NewsArticleModel> articles, List<IndustryModel> inds, List<RegionModel> regs)
         {
             foreach (var art in articles)
             {
-                string content = (art.Title + " " + art.Summary).ToLower();
+                var text = (art.Title + " " + art.Summary).ToLower();
+                art.Industries = new List<string>();
+                art.Regions = new List<string>();
 
-                // Strict matching to avoid everything becoming "General"
-                art.Industries = inds.Where(i => content.Contains(i.Name.ToLower())).Select(i => i.Name).ToList();
-                art.Regions = regs.Where(r => content.Contains(r.Name.ToLower())).Select(r => r.Name).ToList();
+                foreach (var ind in inds)
+                    if (text.Contains(ind.Name.ToLower())) art.Industries.Add(ind.Name);
+
+                foreach (var reg in regs)
+                    if (text.Contains(reg.Name.ToLower())) art.Regions.Add(reg.Name);
 
                 if (!art.Industries.Any()) art.Industries.Add("General Business");
                 if (!art.Regions.Any()) art.Regions.Add("Global");
-                art.Date = DateTime.Today;
             }
             return articles;
-        }
-
-        private List<NewsArticleModel> ParseGuardian(string json)
-        {
-            var list = new List<NewsArticleModel>();
-            var data = JObject.Parse(json);
-            foreach (var item in data["response"]["results"])
-            {
-                list.Add(new NewsArticleModel
-                {
-                    Title = item["webTitle"]?.ToString(),
-                    Url = item["webUrl"]?.ToString(),
-                    Source = "The Guardian",
-                    Summary = "Recent update on SME business trends and regional economic shifts."
-                });
-            }
-            return list;
         }
     }
 }
