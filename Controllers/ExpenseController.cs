@@ -28,7 +28,8 @@ namespace BIP_SMEMC.Controllers
             // 1. DYNAMIC ANCHOR: Find when the user last had activity
             var latestDate = await _financeService.GetLatestTransactionDate(userEmail);
             // 2. RANGE: Pull the full year containing that latest date
-            var startDate = new DateTime(latestDate.Year, 1, 1);
+            var startDate = latestDate.AddMonths(-11).AddDays(1 - latestDate.Day); 
+            // Start of month, 1 year back
             var endDate = latestDate;
 
             var allTrans = await _financeService.GetUserTransactions(userEmail, startDate, latestDate);

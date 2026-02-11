@@ -120,18 +120,36 @@ namespace BIP_SMEMC.Services
                 }
 
                 Debug.WriteLine($"[DB SUCCESS] Saved {savedCount} new articles.");
-                // 6. AI Generation
-                Debug.WriteLine("[AI] Starting Outlook Generation...");
-                var outlooks = await ai.GenerateIndustryOutlooks(uniqueArticles,
-                    industries.Select(i => i.Name).ToList(),
-                    regions.Select(r => r.Name).ToList());
+                // 5. AI Generation (Using ALL recent news for context)
+                // We fetch the last 3 days of news from DB to ensure context is rich even if today's fetch was small
+                var contextNewsRes = await db.From<NewsArticleModel>()
+                    .Order("date", Postgrest.Constants.Ordering.Descending)
+                    .Limit(200)
+                    .Get();
 
-                if (outlooks != null && outlooks.Any())
+                var contextNews = contextNewsRes.Models;
+
+                if (contextNews.Any())
                 {
-                    // Clear old outlooks before adding new ones
-                    await db.From<NewsOutlookModel>().Delete();
-                    await db.From<NewsOutlookModel>().Insert(outlooks);
-                    Debug.WriteLine($"[AI SUCCESS] Saved {outlooks.Count} industry outlooks.");
+                    Debug.WriteLine($"[AI START] Generating Outlooks using {contextNews.Count} context articles...");
+
+                    var outlooks = await ai.GenerateIndustryOutlooks(contextNews,
+                        industries.Select(i => i.Name).ToList(),
+                        regions.Select(r => r.Name).ToList());
+
+                    if (outlooks != null && outlooks.Any())
+                    {
+                        // Refresh Outlook Table
+                        await db.From<NewsOutlookModel>()
+                            .Filter("id", Postgrest.Constants.Operator.GreaterThan, 0)
+                            .Delete();
+                        await db.From<NewsOutlookModel>().Insert(outlooks);
+                        Debug.WriteLine($"[AI SUCCESS] Generated & Saved {outlooks.Count} outlooks.");
+                    }
+                    else
+                    {
+                        Debug.WriteLine("[AIWARN] Gemini returned 0 outlooks.");
+                    }
                 }
             }
             catch (Exception ex)
@@ -204,24 +222,96 @@ namespace BIP_SMEMC.Services
             return articles;
         }
 
-        private List<NewsArticleModel> LocalKeywordTagging(List<NewsArticleModel> articles, List<IndustryModel> inds, List<RegionModel> regs)
+        // ---------------------------------------------------------
+        // IMPROVED TAGGING LOGIC
+        // ---------------------------------------------------------
+        private List<NewsArticleModel> LocalKeywordTagging(List<NewsArticleModel> articles, List<IndustryModel> dbIndustries, List<RegionModel> dbRegions)
         {
             foreach (var art in articles)
             {
-                var text = (art.Title + " " + art.Summary).ToLower();
-                art.Industries = new List<string>();
-                art.Regions = new List<string>();
+                // Normalize text for searching
+                var text = $"{art.Title} {art.Summary}".ToLower();
 
-                foreach (var ind in inds)
-                    if (text.Contains(ind.Name.ToLower())) art.Industries.Add(ind.Name);
+                // Use HashSets to prevent duplicate tags on the same article
+                var foundIndustries = new HashSet<string>();
+                var foundRegions = new HashSet<string>();
 
-                foreach (var reg in regs)
-                    if (text.Contains(reg.Name.ToLower())) art.Regions.Add(reg.Name);
+                // 1. MATCH INDUSTRIES
+                foreach (var ind in dbIndustries)
+                {
+                    // Get keywords for this specific industry (e.g., "F&B" -> food, drink, dining)
+                    var keywords = GetIndustryKeywords(ind.Name);
 
-                if (!art.Industries.Any()) art.Industries.Add("General Business");
-                if (!art.Regions.Any()) art.Regions.Add("Global");
+                    // Check if the article text contains ANY of the keywords
+                    if (keywords.Any(k => text.Contains(k)))
+                    {
+                        foundIndustries.Add(ind.Name);
+                    }
+                }
+
+                // 2. MATCH REGIONS
+                foreach (var reg in dbRegions)
+                {
+                    var keywords = GetRegionKeywords(reg.Name);
+                    if (keywords.Any(k => text.Contains(k)))
+                    {
+                        foundRegions.Add(reg.Name);
+                    }
+                }
+
+                // 3. DEFAULTS
+                if (!foundIndustries.Any()) foundIndustries.Add("General Business");
+                if (!foundRegions.Any()) foundRegions.Add("Global");
+
+                // Assign back to list
+                art.Industries = foundIndustries.ToList();
+                art.Regions = foundRegions.ToList();
             }
             return articles;
+        }
+
+        // --- KEYWORD MAPPINGS ---
+        // This maps the "Database Name" to "Real World Text" found in news
+        private string[] GetIndustryKeywords(string dbName)
+        {
+            var lowerName = dbName.ToLower();
+            return lowerName switch
+            {
+                "technology" => new[] { "tech", "software", " ai ", "artificial intelligence", "cyber", "digital", "data", "app ", "computing" },
+                "finance" => new[] { "bank", "money", "invest", "rates", "tax", "stock", "crypto", "wealth", "economy", "financial", "inflation", "cpi" },
+                "healthcare" => new[] { "health", "pharma", "medical", "hospital", "drug", "care", "vaccine", "doctor" },
+                "retail" => new[] { "shop", "store", "consumer", "sales", "retail", "supermarket", "mall" },
+                "logistics" => new[] { "supply chain", "shipping", "transport", "cargo", "freight", "delivery", "courier", "mail" },
+                "f&b" => new[] { "food", "beverage", "restaurant", "dining", "cafe", "drink", "meal", "diet", "cooking" },
+                "energy" => new[] { "oil", "gas", "solar", "wind", "power", "electric", "fuel", "energy", "nuclear" },
+                "construction" => new[] { "build", "property", "estate", "housing", "construct", "infrastructure" },
+                "manufacturing" => new[] { "factory", "production", "make", "manufacturing", "industrial", "assembly" },
+                "agriculture" => new[] { "farm", "crop", "agri", "harvest", "livestock" },
+                "education" => new[] { "school", "university", "student", "college", "education", "learning" },
+                "e-commerce" => new[] { "online shopping", "amazon", "alibaba", "e-commerce", "marketplace" },
+                "sustainability" => new[] { "green", "carbon", "esg", "climate", "sustainable", "environment", "renewable" },
+                // Default: just look for the name itself
+                _ => new[] { lowerName }
+            };
+        }
+
+        private string[] GetRegionKeywords(string dbName)
+        {
+            var lowerName = dbName.ToLower();
+            return lowerName switch
+            {
+                "north america" => new[] { "usa", "u.s.", "united states", "america", "canada", "mexico", "fed ", "wall street" },
+                "europe" => new[] { "uk", "britain", "london", "eu ", "european", "germany", "france", "italy", "spain", "eurozone" },
+                "asia-pacific" => new[] { "asia", "pacific", "apac", "asean", "orient" },
+                "china" => new[] { "china", "chinese", "beijing", "shanghai", "hk", "hong kong" },
+                "singapore" => new[] { "singapore", "sg ", "lion city", "mas " },
+                "malaysia" => new[] { "malaysia", "kuala lumpur", "ringgit" },
+                "indonesia" => new[] { "indonesia", "jakarta", "bali" },
+                "india" => new[] { "india", "mumbai", "delhi" },
+                "global" => new[] { "global", "world", "international", "planet", "earth" },
+                // Default
+                _ => new[] { lowerName }
+            };
         }
     }
 }

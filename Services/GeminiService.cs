@@ -1,5 +1,7 @@
 ﻿using BIP_SMEMC.Models;
 using Newtonsoft.Json;
+using BIP_SMEMC.Models;
+using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using System.Diagnostics;
 using System.Text;
@@ -11,81 +13,75 @@ namespace BIP_SMEMC.Services
     {
         private readonly HttpClient _http;
         private readonly string _apiKey;
-        // Using v1beta as it is standard for 1.5-flash. 
-        private const string BaseUrl = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent";
-        public GeminiService(HttpClient http, IConfiguration config)
+        private readonly Supabase.Client _db;
+        // Correct Endpoint for 1.5 Flash (v1beta)
+        private const string BaseUrl = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent";
+        public GeminiService(HttpClient http, IConfiguration config, Supabase.Client db)
         {
             _http = http;
             _apiKey = config["Gemini:ApiKey"];
+            _db = db;
         }
 
         public async Task<List<NewsOutlookModel>> GenerateIndustryOutlooks(List<NewsArticleModel> articles, List<string> industries, List<string> regions)
         {
-            // CRITICAL FIX: Append API Key here
             var url = $"{BaseUrl}?key={_apiKey}";
 
-            // 1. Build Rich Context
             var contextBuilder = new StringBuilder();
-            // Limiting to 15 articles to avoid token limits, prioritizing those with diverse tags if possible
-            foreach (var a in articles.Take(15))
+            // Limit increased to 50 for 2.5 Flash
+            foreach (var a in articles.Take(50))
             {
-                contextBuilder.AppendLine($"--- NEWS ITEM ---");
-                contextBuilder.AppendLine($"Headline: {a.Title}");
-                contextBuilder.AppendLine($"Summary: {a.Summary}"); // Included Summary
-                contextBuilder.AppendLine($"Source: {a.Source} | Link: {a.Url}"); // Included Link
-                contextBuilder.AppendLine($"Tags: {string.Join(", ", a.Industries)}");
-                contextBuilder.AppendLine();
+                contextBuilder.AppendLine($"- {a.Title} ({a.Source}) | Tags: {string.Join(",", a.Industries)}");
+                contextBuilder.AppendLine($"  Summary: {a.Summary}");
             }
 
-            // 2. Enhanced Prompt
             var promptText = $@"
-Role: Strategic Market Analyst.
-Context Data (News Articles):
+Role: Strategic Market Analyst for SMEs.
+Context Data (Recent News):
 {contextBuilder}
 
 Task:
-Analyze the provided news. Use the links and summaries to infer deeper market trends. 
-You may use your internal knowledge to supplement the 'Outlook' if the news is sparse, but prioritize the provided context.
+Analyze the news above. Identify trends affecting specific Industries and Regions.
+Cross-reference against these target lists:
+Industries: [{string.Join(", ", industries)}]
+Regions: [{string.Join(", ", regions)}]
 
-Requirements:
-For unique Industry/Region combinations found in the context (matching: Industries [{string.Join(",", industries)}] and Regions [{string.Join(",", regions)}]):
-
-1. 'outlook_summary': A 3-sentence strategic summary for SMEs in that sector/region.
-2. 'top_leaders': Top 5 companies or figures mentioned or relevant to this trend.
+Output Requirements:
+For every Industry/Region combination that has RELEVANT news or implied impact in the data:
+1. 'industry': The specific industry name from the list.
+2. 'region': The specific region name from the list.
+3. 'outlook_summary': A 3-sentence strategic forecast for SMEs.
+4. 'key_events': One specific event or trend driving this outlook.
+5. 'top_leaders': Top 3 entities/companies mentioned or implied.
 
 Format:
-Return ONLY a valid JSON array. No markdown formatting.
-Example: [{{ ""industry"": ""Tech"", ""region"": ""Global"", ""outlook_summary"": ""..."", ""top_leaders"": [""A"",""B""] }}]";
+Return ONLY a valid JSON array of objects. No markdown.
+[{{ ""industry"": ""Tech"", ""region"": ""Global"", ""outlook_summary"": ""..."", ""key_events"": ""..."", ""top_leaders"": [] }}]";
+
+            Debug.WriteLine("==================================================");
+            Debug.WriteLine($"[GEMINI REQUEST] Generating Outlooks");
+            Debug.WriteLine($"[CONTEXT SIZE] {articles.Count} articles");
+            Debug.WriteLine("==================================================");
 
             var requestBody = new { contents = new[] { new { parts = new[] { new { text = promptText } } } } };
-            var jsonContent = JsonConvert.SerializeObject(requestBody);
-
-            // DEBUG: Log what we are sending
-            Debug.WriteLine("------------------------------------------------");
-            Debug.WriteLine($"[GEMINI REQ] URL: {BaseUrl}..."); // Don't log full key
-            Debug.WriteLine($"[GEMINI REQ] Prompt Length: {promptText.Length} chars");
-            // Debug.WriteLine($"[GEMINI REQ] Payload: {jsonContent}"); // Uncomment to see full payload
-            Debug.WriteLine("------------------------------------------------");
 
             try
             {
-                var response = await _http.PostAsync(url, new StringContent(jsonContent, Encoding.UTF8, "application/json"));
+                var response = await _http.PostAsync(url, new StringContent(JsonConvert.SerializeObject(requestBody), Encoding.UTF8, "application/json"));
 
                 if (!response.IsSuccessStatusCode)
                 {
-                    // DEBUG: Log the exact error from Google
-                    var errorJson = await response.Content.ReadAsStringAsync();
-                    Debug.WriteLine($"[GEMINI HTTP ERROR] Status: {response.StatusCode}");
-                    Debug.WriteLine($"[GEMINI ERROR BODY] {errorJson}");
+                    var errorBody = await response.Content.ReadAsStringAsync();
+                    Debug.WriteLine($"[GEMINI HTTP ERROR] {response.StatusCode}: {errorBody}");
                     return new List<NewsOutlookModel>();
                 }
 
-                var jsonResponse = await response.Content.ReadAsStringAsync();
-                return ParseOutlookResponse(jsonResponse);
+                var json = await response.Content.ReadAsStringAsync();
+                return ParseOutlookResponse(json);
             }
             catch (Exception ex)
             {
-                Debug.WriteLine($"[GEMINI EXCEPTION] {ex.Message}");
+                Debug.WriteLine($"[GEMINI CRITICAL ERROR] {ex.Message}");
                 return new List<NewsOutlookModel>();
             }
         }
@@ -94,31 +90,58 @@ Example: [{{ ""industry"": ""Tech"", ""region"": ""Global"", ""outlook_summary""
         {
             try
             {
-                Debug.WriteLine($"[GEMINI RES] Raw Length: {json.Length}");
-                var obj = JObject.Parse(json);
+                Debug.WriteLine("==================================================");
+                Debug.WriteLine($"[GEMINI RAW RESPONSE] Length: {json.Length}");
+                Debug.WriteLine("==================================================");
 
+                var obj = JObject.Parse(json);
                 var text = obj["candidates"]?[0]?["content"]?["parts"]?[0]?["text"]?.ToString();
+
                 if (string.IsNullOrEmpty(text))
                 {
-                    Debug.WriteLine("[GEMINI RES] No text candidate returned.");
+                    Debug.WriteLine("[GEMINI PARSE FAIL] No candidate text found.");
                     return new List<NewsOutlookModel>();
                 }
 
-                // Clean Markdown code blocks if present
+                // Clean Markdown
                 string cleanJson = Regex.Replace(text, @"^```json\s*|\s*```$", "", RegexOptions.IgnoreCase | RegexOptions.Multiline).Trim();
 
+                // DEBUG: Print clean JSON to verify structure before deserialization
+                // Debug.WriteLine($"[CLEAN JSON PREVIEW] {cleanJson.Substring(0, Math.Min(500, cleanJson.Length))}...");
+
                 var outlooks = JsonConvert.DeserializeObject<List<NewsOutlookModel>>(cleanJson);
-                Debug.WriteLine($"[GEMINI RES] Successfully deserialized {outlooks?.Count} outlooks.");
-                return outlooks ?? new List<NewsOutlookModel>();
+
+                if (outlooks == null)
+                {
+                    Debug.WriteLine("[GEMINI PARSE FAIL] Deserialization returned null.");
+                    return new List<NewsOutlookModel>();
+                }
+
+                Debug.WriteLine($"[GEMINI SUCCESS] Parsed {outlooks.Count} outlook items.");
+
+                // Validate items before returning
+                foreach (var o in outlooks)
+                {
+                    o.Date = DateTime.UtcNow; // Ensure date is set
+                    if (o.TopLeaders == null) o.TopLeaders = new List<string>(); // Prevent null list errors
+                    // Log individual items to ensure fields are mapping correctly
+                    Debug.WriteLine($" -> Outlook: {o.Industry}/{o.Region} | Key Event: {o.KeyEvents?.Substring(0, Math.Min(20, o.KeyEvents?.Length ?? 0))}...");
+                }
+
+                return outlooks;
+            }
+            catch (JsonReaderException jex)
+            {
+                Debug.WriteLine($"[GEMINI JSON ERROR] {jex.Message}");
+                Debug.WriteLine($"[BAD JSON] {json}"); // Log full bad JSON for manual inspection
+                return new List<NewsOutlookModel>();
             }
             catch (Exception ex)
             {
                 Debug.WriteLine($"[GEMINI PARSE ERROR] {ex.Message}");
-                Debug.WriteLine($"[RAW WAS] {json}"); // Log raw to see why parse failed
                 return new List<NewsOutlookModel>();
             }
         }
-
         public async Task<string> AnalyzeFinancialTrends(List<TransactionModel> history)
         {
             var url = $"{BaseUrl}?key={_apiKey}";

@@ -56,17 +56,21 @@ namespace BIP_SMEMC.Services
             return allResults;
         }
 
-        // NEW: Helper to find the "Latest" simulation date automatically
+       
         public async Task<DateTime> GetLatestTransactionDate(string userEmail)
         {
-            var res = await _supabase.From<TransactionModel>()
+            var response = await _supabase.From<TransactionModel>()
                 .Where(x => x.UserId == userEmail)
                 .Order("date", Postgrest.Constants.Ordering.Descending)
                 .Limit(1)
                 .Get();
 
-            return res.Models.FirstOrDefault()?.Date ?? DateTime.Today;
+            var latest = response.Models.FirstOrDefault();
+
+            // If we have data, return that date. If not, return real Today.
+            return latest != null ? latest.Date : DateTime.Today;
         }
+
 
         // COMPLEX LOGIC: Seasonal changes based on historical monthly averages
         public double CalculateSeasonality(List<TransactionModel> history, int month)
@@ -101,7 +105,9 @@ namespace BIP_SMEMC.Services
                 FeatureType = feature,
                 ResponseText = text,
                 Justification = justification,
-                VersionTag = DateTime.Now.ToString("yyyyMMdd.HHmm") // Versioning
+                VersionTag = "gemini-1.5-flash", // Or DateTime.Now.ToString("v.yyyyMMdd")
+                DateKey = DateTime.UtcNow.Date,  // CRITICAL: Required by your DB schema
+                CreatedAt = DateTime.UtcNow
             };
             await _supabase.From<AIResponseModel>().Insert(response);
         }

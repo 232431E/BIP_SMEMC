@@ -22,7 +22,7 @@ namespace BIP_SMEMC.Controllers
 
             // 1. Get Data Range
             var latestDate = await _financeService.GetLatestTransactionDate(userEmail);
-            var startDate = latestDate.AddMonths(-12);
+            var startDate = latestDate.AddMonths(-5);
 
             // 2. Fetch Data
             var allTrans = await _financeService.GetUserTransactions(userEmail, startDate, latestDate);
