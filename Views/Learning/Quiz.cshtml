@@ -1,0 +1,39 @@
+﻿@model BIP_SMEMC.Models.LearningQuizPageViewModel
+
+@{
+    ViewData["Title"] = "Quiz";
+}
+
+<h2>@Model.Topic.Title (@Model.Difficulty)</h2>
+<p>Total Points: <strong>@Model.TotalPoints</strong></p>
+
+<form action="/Learning/SubmitQuiz" method="post">
+    @Html.AntiForgeryToken()
+
+    <input type="hidden" name="topicId" value="@Model.Topic.Id" />
+    <input type="hidden" name="difficulty" value="@Model.Difficulty" />
+
+    @foreach (var q in Model.Questions)
+    {
+        <div style="margin-bottom:20px;">
+            <p><strong>@q.Question</strong></p>
+
+            @foreach (var opt in q.Options)
+            {
+                <label>
+                    <input type="radio"
+                           name="q_@q.Id"
+                           value="@opt.Id"
+                           required />
+                    @opt.Text
+                </label>
+                <br />
+            }
+        </div>
+    }
+
+    <button type="submit" class="btn btn-primary">
+        Submit Quiz
+    </button>
+</form>
+

@@ -1,0 +1,51 @@
+﻿@model BIP_SMEMC.Models.LearningQuizResult
+
+@{
+    ViewData["Title"] = "Quiz Result";
+}
+
+<div class="container mt-5">
+    <div class="card shadow-sm">
+        <div class="card-body text-center">
+
+            <h2 class="mb-3">Quiz Results</h2>
+
+            <h1 class="display-4 fw-bold
+                @(Model.Passed ? " text-success" : "text-danger" )">
+                @Model.PercentageScore%
+            </h1>
+
+            <p class="text-muted">
+                You answered <strong>@Model.CorrectAnswers</strong> out of
+                <strong>@Model.TotalQuestions</strong> questions correctly
+            </p>
+
+            @if (Model.Passed)
+            {
+            <div class="alert alert-success mt-4">
+                🎉 <strong>Congratulations!</strong><br />
+                You passed this quiz and earned
+                <strong>@Model.PointsAwarded points</strong>.
+            </div>
+
+            <a class="btn btn-primary mt-3"
+               href="/Learning">
+                Back to Learning Hub
+            </a>
+            }
+            else
+            {
+            <div class="alert alert-warning mt-4">
+                ❌ You did not pass this quiz.<br />
+                You can retry as many times as you want.
+            </div>
+
+            <a class="btn btn-warning mt-3"
+               href="/Learning/Quiz?topicId=@Model.TopicId&difficulty=@Model.Difficulty">
+                Retry Quiz
+            </a>
+            }
+        </div>
+    </div>
+</div>
+

@@ -1,0 +1,61 @@
+﻿@model BIP_SMEMC.Models.ForumThread
+
+@{
+    ViewData["Title"] = "Thread";
+}
+
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <h2 class="mb-0">@Model.Title</h2>
+    <a href="/Community" class="btn btn-outline-secondary btn-sm">← Back</a>
+</div>
+
+<div class="card mb-4">
+    <div class="card-body">
+        <span class="badge bg-secondary">@Model.Category</span>
+
+        <p class="text-muted mt-2 mb-0">
+            Posted by <b>@Model.Author</b> · @Model.CreatedAt.ToString("dd/MM/yyyy hh:mm tt")
+        </p>
+    </div>
+</div>
+
+<h4 class="mb-3">Replies (@Model.Replies.Count)</h4>
+
+@if (!Model.Replies.Any())
+{
+    <div class="text-muted mb-4">No replies yet. Be the first to reply.</div>
+}
+else
+{
+    foreach (var r in Model.Replies.OrderByDescending(x => x.CreatedAt))
+    {
+        <div class="card mb-3">
+            <div class="card-body">
+                <div class="d-flex justify-content-between">
+                    <div><b>@r.Author</b></div>
+                    <div class="text-muted small">@r.CreatedAt.ToString("dd/MM/yyyy hh:mm tt")</div>
+                </div>
+
+                <div class="mt-2">@r.Message</div>
+            </div>
+        </div>
+    }
+}
+
+<hr class="my-4" />
+
+<h4 class="mb-3">Add Reply</h4>
+
+<form method="post" action="/Community/Reply">
+    @Html.AntiForgeryToken()
+
+    <input type="hidden" name="threadId" value="@Model.Id" />
+
+    <div class="mb-3">
+        <label class="form-label">Your Reply</label>
+        <textarea class="form-control" name="Message" rows="3" maxlength="1000" required></textarea>
+    </div>
+
+    <button class="btn btn-primary" type="submit">Post Reply</button>
+</form>
+

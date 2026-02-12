@@ -1,0 +1,253 @@
+@model BIP_SMEMC.Models.ViewModels.RewardsPageViewModel
+@{
+    ViewData["Title"] = "Rewards & Game Points";
+    var activeTab = string.IsNullOrWhiteSpace(Model.ActiveTab) ? "vouchers" : Model.ActiveTab;
+    if (activeTab == "earn")
+    {
+        activeTab = "vouchers";
+    }
+}
+
+<div class="container-fluid py-4">
+    <div class="mb-3">
+        <h2 class="fw-bold mb-1">Rewards & Game Points</h2>
+        <div class="text-muted">Earn points and claim exclusive vouchers</div>
+    </div>
+
+    @if (TempData["Success"] != null)
+    {
+        <div class="alert alert-success">@TempData["Success"]</div>
+    }
+    @if (TempData["Error"] != null)
+    {
+        <div class="alert alert-danger">@TempData["Error"]</div>
+    }
+
+    <div class="row g-3 mb-3">
+        <div class="col-md-6 col-xl-3">
+            <div class="card h-100 border-warning-subtle bg-warning-subtle">
+                <div class="card-body">
+                    <div class="small fw-semibold mb-2"><i class="bi bi-trophy me-1"></i>Total Points</div>
+                    <div class="display-6 fw-bold">@Model.CurrentPoints</div>
+                    <div class="text-muted">Available to spend</div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-6 col-xl-3">
+            <div class="card h-100">
+                <div class="card-body">
+                    <div class="small fw-semibold mb-2"><i class="bi bi-graph-up-arrow me-1 text-success"></i>Total Earned</div>
+                    <div class="display-6 fw-bold">@Model.TotalEarned</div>
+                    <div class="text-muted">All time</div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-6 col-xl-3">
+            <div class="card h-100">
+                <div class="card-body">
+                    <div class="small fw-semibold mb-2"><i class="bi bi-gift me-1 text-primary"></i>Total Redeemed</div>
+                    <div class="display-6 fw-bold">@Model.TotalRedeemed</div>
+                    <div class="text-muted">Points spent</div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-6 col-xl-3">
+            <div class="card h-100">
+                <div class="card-body">
+                    <div class="small fw-semibold mb-2"><i class="bi bi-award me-1 text-purple"></i>Achievements</div>
+                    <div class="display-6 fw-bold">@Model.AchievementsUnlocked/@Model.TotalAchievements</div>
+                    <div class="text-muted">Unlocked</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <ul class="nav nav-pills bg-body-tertiary rounded-pill p-1 mb-4" id="rewards-tabs" role="tablist">
+        <li class="nav-item" role="presentation">
+            <button class="nav-link rounded-pill @(activeTab == "vouchers" ? "active" : "")"
+                    id="vouchers-tab"
+                    data-bs-toggle="pill"
+                    data-bs-target="#vouchers-panel"
+                    type="button"
+                    role="tab">
+                Available Vouchers
+            </button>
+        </li>
+        <li class="nav-item" role="presentation">
+            <button class="nav-link rounded-pill @(activeTab == "achievements" ? "active" : "")"
+                    id="achievements-tab"
+                    data-bs-toggle="pill"
+                    data-bs-target="#achievements-panel"
+                    type="button"
+                    role="tab">
+                Achievements
+            </button>
+        </li>
+        <li class="nav-item" role="presentation">
+            <button class="nav-link rounded-pill @(activeTab == "history" ? "active" : "")"
+                    id="history-tab"
+                    data-bs-toggle="pill"
+                    data-bs-target="#history-panel"
+                    type="button"
+                    role="tab">
+                Transaction History
+            </button>
+        </li>
+    </ul>
+
+    <div class="tab-content" id="rewards-tab-content">
+        <div class="tab-pane fade @(activeTab == "vouchers" ? "show active" : "")" id="vouchers-panel" role="tabpanel">
+            <div class="row g-3">
+                @foreach (var reward in Model.Rewards)
+                {
+                    <div class="col-md-6 col-xl-4">
+                        <div class="card h-100 shadow-sm">
+                            <div class="card-body d-flex flex-column">
+                                <div class="d-flex justify-content-between align-items-center mb-2">
+                                    <span class="badge bg-secondary-subtle text-dark">@reward.Category</span>
+                                    <span class="small text-muted">@reward.PointsCost pts</span>
+                                </div>
+                                <h5 class="fw-bold">@reward.Title</h5>
+                                <div class="text-muted small mb-2">@reward.Partner</div>
+                                <p class="text-muted flex-grow-1">@reward.Description</p>
+
+                                <form method="post" action="@Url.Action("Redeem", "Rewards")">
+                                    @Html.AntiForgeryToken()
+                                    <input type="hidden" name="rewardId" value="@reward.Id" />
+                                    <button class="btn btn-dark w-100" type="submit" @(Model.CurrentPoints < reward.PointsCost ? "disabled" : "")>
+                                        <i class="bi bi-gift me-1"></i>Claim Now
+                                    </button>
+                                </form>
+                            </div>
+                        </div>
+                    </div>
+                }
+            </div>
+        </div>
+
+        <div class="tab-pane fade @(activeTab == "achievements" ? "show active" : "")" id="achievements-panel" role="tabpanel">
+            <div class="card">
+                <div class="card-body">
+                    <h5 class="fw-bold mb-1">Your Achievements</h5>
+                    <div class="text-muted mb-3">Unlock achievements to earn bonus points</div>
+                    @{
+                        var points = Model.CurrentPoints;
+                        var invoiceCount = Model.History.Count(h => h.Activity.Contains("invoice", StringComparison.OrdinalIgnoreCase));
+                        var budgetCount = Model.History.Count(h => h.Activity.Contains("budget", StringComparison.OrdinalIgnoreCase));
+                        var communityCount = Model.History.Count(h => h.Activity.Contains("thread", StringComparison.OrdinalIgnoreCase) || h.Activity.Contains("discussion", StringComparison.OrdinalIgnoreCase));
+                        var learningCount = Model.History.Count(h => h.Activity.Contains("learning", StringComparison.OrdinalIgnoreCase) || h.Activity.Contains("module", StringComparison.OrdinalIgnoreCase));
+                        var debtCount = Model.History.Count(h => h.Activity.Contains("debt", StringComparison.OrdinalIgnoreCase) || h.Activity.Contains("credit", StringComparison.OrdinalIgnoreCase));
+                        var pointsBadge = Model.CurrentPoints >= 250 ? "Unlocked" : "In Progress";
+                    }
+
+                    <div class="rounded-3 border border-success-subtle bg-success-subtle p-3 mb-3">
+                        <div class="d-flex justify-content-between align-items-center">
+                            <div class="d-flex align-items-center gap-3">
+                                <div class="rounded-3 bg-success-subtle p-2">
+                                    <i class="bi bi-check-circle text-success fs-5"></i>
+                                </div>
+                                <div>
+                                    <div class="fw-bold">First Milestone</div>
+                                    <div class="text-muted">Earn your first 250 points</div>
+                                </div>
+                            </div>
+                            <span class="badge rounded-pill bg-success-subtle text-success-emphasis border border-success-subtle">@pointsBadge</span>
+                        </div>
+                    </div>
+
+                    @{
+                        var items = new[]
+                        {
+                            new { Title = "Invoice Master", Description = "Create 50 invoices", Current = invoiceCount, Target = 50, Reward = 200, Icon = "bi-trophy" },
+                            new { Title = "Budget Guru", Description = "Maintain budget for 3 cycles", Current = budgetCount, Target = 3, Reward = 300, Icon = "bi-star" },
+                            new { Title = "Community Helper", Description = "Help 20 community members", Current = communityCount, Target = 20, Reward = 150, Icon = "bi-award" },
+                            new { Title = "Financial Scholar", Description = "Complete all learning modules", Current = learningCount, Target = 6, Reward = 500, Icon = "bi-mortarboard" },
+                            new { Title = "Debt Free", Description = "Complete 4 debt-related actions", Current = debtCount, Target = 4, Reward = 1000, Icon = "bi-graph-up-arrow" }
+                        };
+                    }
+
+                    @foreach (var item in items)
+                    {
+                        var progress = item.Target == 0 ? 0 : Math.Min(100, (int)Math.Round((double)item.Current * 100 / item.Target));
+                        <div class="rounded-3 border p-3 mb-3">
+                            <div class="d-flex justify-content-between align-items-center mb-2">
+                                <div class="d-flex align-items-center gap-3">
+                                    <div class="rounded-3 bg-body-tertiary p-2">
+                                        <i class="bi @item.Icon text-secondary fs-5"></i>
+                                    </div>
+                                    <div>
+                                        <div class="fw-bold">@item.Title</div>
+                                        <div class="text-muted">@item.Description</div>
+                                    </div>
+                                </div>
+                                <span class="badge rounded-pill bg-body-tertiary text-body border">
+                                    <i class="bi bi-trophy me-1"></i>@item.Reward pts
+                                </span>
+                            </div>
+
+                            <div class="small text-muted mb-1">Progress</div>
+                            <div class="progress" style="height:8px;">
+                                <div class="progress-bar bg-dark" role="progressbar" style="width:@progress%"></div>
+                            </div>
+                            <div class="text-end small mt-1">@item.Current / @item.Target</div>
+                        </div>
+                    }
+                </div>
+            </div>
+        </div>
+
+        <div class="tab-pane fade @(activeTab == "history" ? "show active" : "")" id="history-panel" role="tabpanel">
+            <div class="card">
+                <div class="card-body">
+                    <h5 class="fw-bold mb-3">Points Transaction History</h5>
+                    @if (Model.History.Count == 0)
+                    {
+                        <div class="text-muted">No transactions yet.</div>
+                    }
+                    else
+                    {
+                        <div class="table-responsive">
+                            <table class="table table-striped align-middle">
+                                <thead>
+                                    <tr>
+                                        <th>Date</th>
+                                        <th>Activity</th>
+                                        <th class="text-end">Points</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                @foreach (var item in Model.History)
+                                {
+                                    <tr>
+                                        <td>@item.Date.ToString("yyyy-MM-dd HH:mm")</td>
+                                        <td>@item.Activity</td>
+                                        <td class="text-end fw-semibold @(item.Points >= 0 ? "text-success" : "text-danger")">
+                                            @(item.Points >= 0 ? "+" : "")@item.Points
+                                        </td>
+                                    </tr>
+                                }
+                                </tbody>
+                            </table>
+                        </div>
+                    }
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+@section Scripts {
+    <script>
+        (function () {
+            const tabs = document.querySelectorAll('#rewards-tabs button[data-bs-toggle="pill"]');
+            tabs.forEach(function (tab) {
+                tab.addEventListener('shown.bs.tab', function (event) {
+                    const tabId = event.target.id.replace('-tab', '');
+                    const url = new URL(window.location.href);
+                    url.searchParams.set('tab', tabId);
+                    window.history.replaceState({}, '', url);
+                });
+            });
+        })();
+    </script>
+}

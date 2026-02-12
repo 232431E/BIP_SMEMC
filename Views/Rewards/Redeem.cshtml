@@ -1,0 +1,59 @@
+﻿@model List<BIP_SMEMC.Models.Reward>
+
+@{
+    ViewData["Title"] = "Redeem Rewards";
+    var points = (int)(ViewBag.Points ?? 0);
+}
+
+<div class="container mt-4">
+    <div class="d-flex justify-content-between align-items-center mb-3">
+        <h2 class="fw-bold">Redeem Rewards</h2>
+        <span class="badge bg-warning text-dark fs-6">
+            <i class="bi bi-trophy me-1"></i>
+            @points Points
+        </span>
+    </div>
+
+    @if (TempData["Error"] != null)
+    {
+        <div class="alert alert-danger">@TempData["Error"]</div>
+    }
+    @if (TempData["Success"] != null)
+    {
+        <div class="alert alert-success">@TempData["Success"]</div>
+    }
+
+    <div class="row g-3">
+        @foreach (var r in Model)
+        {
+            <div class="col-md-4">
+                <div class="card shadow-sm h-100">
+                    <div class="card-body">
+                        <div class="small text-muted">@r.Category</div>
+                        <h5 class="fw-bold">@r.Title</h5>
+                        <div class="text-muted mb-2">@r.Partner</div>
+                        <p class="mb-3">@r.Description</p>
+
+                        <div class="d-flex justify-content-between align-items-center">
+                            <span class="badge bg-secondary">@r.PointsCost pts</span>
+
+                            <form method="post" action="/Rewards/Redeem">
+                                @Html.AntiForgeryToken()
+                                <input type="hidden" name="rewardId" value="@r.Id" />
+                                <button class="btn btn-sm btn-primary" type="submit" @(points < r.PointsCost ? "disabled" : "")>
+                                    Redeem
+                                </button>
+                            </form>
+                        </div>
+
+                        @if (points < r.PointsCost)
+                        {
+                            <div class="text-danger small mt-2">Not enough points.</div>
+                        }
+                    </div>
+                </div>
+            </div>
+        }
+    </div>
+</div>
+

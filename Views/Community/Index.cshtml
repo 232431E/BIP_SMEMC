@@ -1,0 +1,425 @@
+@model BIP_SMEMC.Models.ViewModels.CommunityHubViewModel
+
+@{
+    ViewData["Title"] = "Community";
+    var profile = Model.Profile ?? new BIP_SMEMC.Models.CommunityProfile();
+    var discussionCount = Model.Threads?.Count ?? 0;
+    var eventCount = profile.EventsRsvpedCount;
+    var resourceCount = profile.ResourcesDownloadedCount;
+    var badgeCount = profile.BadgesEarnedCount;
+    var activeTab = (ViewData["ActiveTab"] as string ?? "discussions").ToLowerInvariant();
+    var discussionsActive = activeTab == "discussions";
+    var eventsActive = activeTab == "events";
+    var resourcesActive = activeTab == "resources";
+    var badgesActive = activeTab == "badges";
+}
+
+<div class="mb-4">
+    <div class="d-flex justify-content-between align-items-start flex-wrap gap-3">
+        <div>
+            <h2 class="fw-bold mb-1">SME Community &amp; Support Network</h2>
+            <div class="text-muted">Connect, learn, and grow with fellow entrepreneurs</div>
+        </div>
+
+        <div class="card shadow-sm community-reputation">
+            <div class="card-body d-flex align-items-center justify-content-between">
+                <div class="me-3">
+                    <div class="text-muted small">Reputation Points</div>
+                    <div class="fs-3 fw-bold">@profile.ReputationPoints</div>
+                </div>
+                <div class="fs-1 text-warning">
+                    <i class="bi bi-trophy"></i>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row g-3 mb-4">
+    <div class="col-md-3">
+        <div class="card shadow-sm h-100 community-card" data-tab="discussions">
+            <div class="card-body">
+                <div class="d-flex align-items-center gap-2 mb-2">
+                    <i class="bi bi-chat-left-text"></i>
+                    <div class="fw-semibold">My Discussions</div>
+                </div>
+                <div class="fs-3 fw-bold">@discussionCount</div>
+                <div class="text-muted small">Participated in</div>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card shadow-sm h-100 community-card" data-tab="events">
+            <div class="card-body">
+                <div class="d-flex align-items-center gap-2 mb-2">
+                    <i class="bi bi-calendar-event"></i>
+                    <div class="fw-semibold">My Events</div>
+                </div>
+                <div class="fs-3 fw-bold">@eventCount</div>
+                <div class="text-muted small">RSVPed to</div>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card shadow-sm h-100 community-card" data-tab="resources">
+            <div class="card-body">
+                <div class="d-flex align-items-center gap-2 mb-2">
+                    <i class="bi bi-download"></i>
+                    <div class="fw-semibold">My Resources</div>
+                </div>
+                <div class="fs-3 fw-bold">@resourceCount</div>
+                <div class="text-muted small">Downloaded</div>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card shadow-sm h-100 community-card" data-tab="badges">
+            <div class="card-body">
+                <div class="d-flex align-items-center gap-2 mb-2">
+                    <i class="bi bi-award"></i>
+                    <div class="fw-semibold">My Badges</div>
+                </div>
+                <div class="fs-3 fw-bold">@badgeCount</div>
+                <div class="text-muted small">Earned badges</div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<ul class="nav nav-pills gap-2 mb-4 community-tabs" id="communityTabs" role="tablist">
+    <li class="nav-item" role="presentation">
+        <button class="nav-link @(discussionsActive ? "active" : "")" id="tab-discussions" data-bs-toggle="pill" data-bs-target="#panel-discussions" type="button" role="tab">
+            <i class="bi bi-chat-left-text me-1"></i> Discussions
+        </button>
+    </li>
+    <li class="nav-item" role="presentation">
+        <button class="nav-link @(eventsActive ? "active" : "")" id="tab-events" data-bs-toggle="pill" data-bs-target="#panel-events" type="button" role="tab">
+            <i class="bi bi-calendar-event me-1"></i> Events
+        </button>
+    </li>
+    <li class="nav-item" role="presentation">
+        <button class="nav-link @(resourcesActive ? "active" : "")" id="tab-resources" data-bs-toggle="pill" data-bs-target="#panel-resources" type="button" role="tab">
+            <i class="bi bi-download me-1"></i> Resources
+        </button>
+    </li>
+    <li class="nav-item" role="presentation">
+        <button class="nav-link @(badgesActive ? "active" : "")" id="tab-badges" data-bs-toggle="pill" data-bs-target="#panel-badges" type="button" role="tab">
+            <i class="bi bi-award me-1"></i> Badges
+        </button>
+    </li>
+</ul>
+
+<div class="tab-content">
+    <div class="tab-pane fade @(discussionsActive ? "show active" : "")" id="panel-discussions" role="tabpanel">
+        <div class="d-flex align-items-center justify-content-between mb-3 flex-wrap gap-2">
+            <div class="input-group" style="max-width: 520px;">
+                <span class="input-group-text bg-white">
+                    <i class="bi bi-search"></i>
+                </span>
+                <input type="text"
+                       id="searchBox"
+                       class="form-control"
+                       placeholder="Search discussions..."
+                       autocomplete="off" />
+            </div>
+            <a href="/Community/Create" class="btn btn-dark">
+                <i class="bi bi-plus-lg me-1"></i> New Discussion
+            </a>
+        </div>
+
+        <div id="threadList">
+            @await Html.PartialAsync("_ThreadList", Model.Threads)
+        </div>
+    </div>
+
+    <div class="tab-pane fade @(eventsActive ? "show active" : "")" id="panel-events" role="tabpanel">
+        <div class="community-section mb-3">
+            <div>
+                <h5 class="fw-semibold mb-1">Event &amp; Webinar Ticketing System</h5>
+                <div class="text-muted">Register for upcoming events and track your attendance</div>
+            </div>
+        </div>
+
+        <div class="row g-3">
+            @foreach (var ev in Model.Events)
+            {
+                var badgeClass = ev.IsRegistered ? "bg-success-subtle text-success" : "bg-light text-muted";
+                var cardClass = ev.IsRegistered ? "community-event-card registered" : "community-event-card";
+                var actionLabel = string.IsNullOrWhiteSpace(ev.ActionLabel)
+                    ? (ev.IsRegistered ? "Cancel RSVP" : "RSVP")
+                    : ev.ActionLabel;
+
+                <div class="col-lg-6">
+                    <div class="card shadow-sm h-100 @cardClass">
+                        <div class="card-body">
+                            <div class="d-flex flex-wrap gap-2 mb-2">
+                                <span class="badge rounded-pill text-bg-light">@ev.EventType</span>
+                                <span class="badge rounded-pill text-bg-light">@ev.Category</span>
+                                @if (!string.IsNullOrWhiteSpace(ev.StatusLabel))
+                                {
+                                    <span class="badge rounded-pill @badgeClass">@ev.StatusLabel</span>
+                                }
+                                @if (ev.ReminderSet)
+                                {
+                                    <span class="badge rounded-pill text-bg-light">Reminder Set</span>
+                                }
+                            </div>
+
+                            <h5 class="fw-semibold mb-1">@ev.Title</h5>
+                            <div class="text-muted small mb-2">by @ev.HostName@if (!string.IsNullOrWhiteSpace(ev.HostTitle)){<span>, @ev.HostTitle</span>}</div>
+
+                            <div class="d-flex flex-wrap gap-4 text-muted small mb-3">
+                                <div><i class="bi bi-calendar-event me-1"></i>@ev.StartAt.ToString("MM/dd/yyyy h:mm tt") @ev.Timezone</div>
+                                <div><i class="bi bi-geo-alt me-1"></i>@ev.Location</div>
+                            </div>
+
+                            <div class="d-flex align-items-center gap-3 mb-3">
+                                <div class="community-progress">
+                                    <div class="progress">
+                                        @{
+                                            var pct = ev.SeatsTotal == 0 ? 0 : (int)Math.Round(ev.SeatsBooked * 100.0 / ev.SeatsTotal);
+                                        }
+                                        <div class="progress-bar" role="progressbar" style="width: @pct%"></div>
+                                    </div>
+                                    <div class="text-muted small mt-1">@ev.SeatsBooked / @ev.SeatsTotal seats booked</div>
+                                </div>
+                                <div class="ms-auto">
+                                    <button class="btn @(ev.IsRegistered ? "btn-outline-dark" : "btn-dark") btn-sm">@actionLabel</button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            }
+        </div>
+    </div>
+
+    <div class="tab-pane fade @(resourcesActive ? "show active" : "")" id="panel-resources" role="tabpanel">
+        <div class="d-flex align-items-center justify-content-between mb-3 flex-wrap gap-2">
+            <div>
+                <h5 class="fw-semibold mb-1">Resource Sharing Library</h5>
+                <div class="text-muted">Templates, guides, and tools shared by the community</div>
+            </div>
+            <button class="btn btn-dark btn-sm" data-bs-toggle="modal" data-bs-target="#uploadResourceModal">
+                <i class="bi bi-upload me-1"></i> Upload Resource
+            </button>
+        </div>
+
+        <div class="row g-3">
+            @foreach (var res in Model.Resources)
+            {
+                <div class="col-lg-6">
+                    <div class="card shadow-sm h-100 community-resource-card">
+                        <div class="card-body">
+                            <div class="d-flex flex-wrap gap-2 mb-2">
+                                <span class="badge rounded-pill text-bg-light">@res.TagPrimary</span>
+                                <span class="badge rounded-pill text-bg-light">@res.TagSecondary</span>
+                            </div>
+                            <h6 class="fw-semibold mb-1">@res.Title</h6>
+                            <div class="text-muted small mb-2">by @res.Author</div>
+                            <div class="text-muted small mb-3">@res.Summary</div>
+                            <div class="d-flex align-items-center justify-content-between">
+                                <div class="text-muted small">
+                                    <i class="bi bi-download me-1"></i>@res.DownloadCount downloads
+                                </div>
+                                @if (!string.IsNullOrWhiteSpace(res.FileUrl))
+                                {
+                                    <a class="btn btn-dark btn-sm" href="@res.FileUrl" target="_blank" rel="noopener">
+                                        <i class="bi bi-download me-1"></i> Download (+@res.PointsReward pts)
+                                    </a>
+                                }
+                                else
+                                {
+                                    <button class="btn btn-dark btn-sm" disabled>
+                                        <i class="bi bi-download me-1"></i> Download (+@res.PointsReward pts)
+                                    </button>
+                                }
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            }
+        </div>
+    </div>
+
+    <div class="tab-pane fade @(badgesActive ? "show active" : "")" id="panel-badges" role="tabpanel">
+        <div class="community-section mb-3">
+            <div class="d-flex align-items-start gap-2">
+                <i class="bi bi-trophy text-warning fs-5"></i>
+                <div>
+                    <h5 class="fw-semibold mb-1">Your Achievements</h5>
+                    <div class="text-muted">Badges you've earned so far</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="row g-3 mb-4">
+            @foreach (var badge in Model.BadgesEarned)
+            {
+                <div class="col-lg-6">
+                    <div class="card shadow-sm h-100 badge-earned">
+                        <div class="card-body d-flex align-items-center justify-content-between">
+                            <div class="d-flex align-items-center gap-3">
+                                <div class="badge-icon @badge.IconColor">
+                                    <i class="bi @badge.Icon"></i>
+                                </div>
+                                <div>
+                                    <div class="fw-semibold">@badge.Title <span class="badge text-bg-success ms-1">Earned</span></div>
+                                    <div class="text-muted small">@badge.Description</div>
+                                    @if (badge.EarnedAt.HasValue)
+                                    {
+                                        <div class="text-muted small mt-1">Earned on @badge.EarnedAt.Value.ToString("yyyy-MM-dd")</div>
+                                    }
+                                </div>
+                            </div>
+                            <span class="badge text-bg-warning">+@badge.Points pts</span>
+                        </div>
+                    </div>
+                </div>
+            }
+        </div>
+
+        <div class="community-section mb-3">
+            <div class="d-flex align-items-start gap-2">
+                <i class="bi bi-stars text-primary fs-5"></i>
+                <div>
+                    <h5 class="fw-semibold mb-1">Badges In Progress</h5>
+                    <div class="text-muted">Keep going! Complete these milestones to earn rewards</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="row g-3">
+            @foreach (var badge in Model.BadgesInProgress)
+            {
+                <div class="col-12">
+                    <div class="card shadow-sm">
+                        <div class="card-body">
+                            <div class="d-flex justify-content-between align-items-center mb-1">
+                                <div class="fw-semibold d-flex align-items-center gap-2">
+                                    <i class="bi @badge.Icon @badge.IconColor"></i>
+                                    <span>@badge.Title</span>
+                                </div>
+                                <span class="badge text-bg-primary">+@badge.Points pts</span>
+                            </div>
+                            <div class="text-muted small mb-3">@badge.Description</div>
+                            <div class="progress community-progress-bar">
+                                <div class="progress-bar" role="progressbar" style="width: @(badge.ProgressPercent ?? 0)%"></div>
+                            </div>
+                            <div class="d-flex justify-content-between text-muted small mt-2">
+                                <span>@(badge.ProgressPercent ?? 0)% complete</span>
+                                <span>@(badge.ProgressCurrent ?? 0) / @(badge.ProgressTarget ?? 0)</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            }
+        </div>
+    </div>
+</div>
+
+<div class="modal fade" id="uploadResourceModal" tabindex="-1" aria-labelledby="uploadResourceLabel" aria-hidden="true">
+    <div class="modal-dialog modal-lg modal-dialog-centered">
+        <div class="modal-content">
+            <form method="post" action="/Community/UploadResource" enctype="multipart/form-data">
+                @Html.AntiForgeryToken()
+                <div class="modal-header">
+                    <h5 class="modal-title" id="uploadResourceLabel">Upload Resource</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="row g-3">
+                        <div class="col-12">
+                            <label class="form-label">Title</label>
+                            <input class="form-control" name="title" required maxlength="120" />
+                        </div>
+                        <div class="col-12">
+                            <label class="form-label">Summary</label>
+                            <textarea class="form-control" name="summary" rows="3" required maxlength="300"></textarea>
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label">Primary Tag</label>
+                            <input class="form-control" name="tagPrimary" placeholder="Templates" />
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label">Secondary Tag</label>
+                            <input class="form-control" name="tagSecondary" placeholder="PDF / XLSX" />
+                        </div>
+                        <div class="col-12">
+                            <label class="form-label">File</label>
+                            <input class="form-control" type="file" name="file" required />
+                            <div class="form-text">Uploads to Supabase Storage (public)</div>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-dark">Upload</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<form id="antiForgeryForm" method="post">
+    @Html.AntiForgeryToken()
+</form>
+
+@section Scripts {
+    <script>
+        const antiForgeryToken = document.querySelector('#antiForgeryForm input[name="__RequestVerificationToken"]')?.value;
+        const searchBox = document.getElementById("searchBox");
+        const threadList = document.getElementById("threadList");
+        let timeout = null;
+
+        if (searchBox) {
+            searchBox.addEventListener("input", () => {
+                clearTimeout(timeout);
+                timeout = setTimeout(() => {
+                    const query = searchBox.value;
+                    fetch(`/Community/Search?q=${encodeURIComponent(query)}`)
+                        .then(res => res.text())
+                        .then(html => {
+                            threadList.innerHTML = html;
+                        });
+                }, 250);
+            });
+        }
+
+        document.querySelectorAll(".community-card").forEach(card => {
+            card.addEventListener("click", () => {
+                const target = card.getAttribute("data-tab");
+                const btn = document.getElementById(`tab-${target}`);
+                if (!btn) return;
+                const tab = new bootstrap.Tab(btn);
+                tab.show();
+            });
+        });
+
+        document.addEventListener("click", (event) => {
+            const btn = event.target.closest(".upvote-btn");
+            if (!btn) return;
+
+            event.preventDefault();
+            event.stopPropagation();
+
+            const threadId = btn.getAttribute("data-thread-id");
+            if (!threadId) return;
+
+            fetch(`/Community/Upvote/${threadId}`, {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                    "RequestVerificationToken": antiForgeryToken || ""
+                }
+            })
+                .then(res => res.json())
+                .then(data => {
+                    const countEl = document.querySelector(`.upvote-count[data-thread-id="${threadId}"]`);
+                    if (countEl && typeof data?.upvotes === "number") {
+                        countEl.textContent = data.upvotes;
+                    }
+                });
+        });
+    </script>
+}

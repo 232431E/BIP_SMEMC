@@ -1,0 +1,83 @@
+﻿@model BIP_SMEMC.Models.LearningTopic
+
+@{
+    ViewData["Title"] = Model.Title;
+}
+
+<div class="container mt-4">
+
+    <a href="/Learning" class="btn btn-link mb-3">
+        ← Back to Learning Hub
+    </a>
+
+    <div class="card shadow-sm">
+        <div class="card-body">
+
+            <span class="badge bg-primary mb-2">
+                @Model.Title
+            </span>
+
+            <h3 class="fw-bold mt-2">@Model.Title</h3>
+            <div class="text-muted mb-3">
+                Level: <strong>@(ViewData["Difficulty"] ?? "Beginner")</strong>
+            </div>
+
+            <p class="text-muted mt-3">
+                Learn essential financial concepts through structured modules below.
+            </p>
+
+            <hr />
+
+            @if (Model.Modules != null && Model.Modules.Any())
+            {
+                foreach (var module in Model.Modules)
+                {
+                    <div class="mb-4">
+                        <h4 class="fw-semibold">@module.Title</h4>
+
+                        @if (module.Sections != null && module.Sections.Any())
+                        {
+                            foreach (var section in module.Sections.OrderBy(s => s.Id))
+                            {
+                                <div class="mb-3">
+                                    <h5 class="fw-semibold">@(section.Heading)</h5>
+                                    <p class="text-muted">@(section.Body)</p>
+
+                                    @if (!string.IsNullOrWhiteSpace(section.ImageUrl))
+                                    {
+                                        <div class="mb-2">
+                                            <img src="@(section.ImageUrl)" class="img-fluid rounded" alt="Learning visual" />
+                                        </div>
+                                    }
+
+                                    @if (!string.IsNullOrWhiteSpace(section.VideoUrl))
+                                    {
+                                        <div class="ratio ratio-16x9 mb-2">
+                                            <iframe src="@(section.VideoUrl)" title="Learning video" allowfullscreen></iframe>
+                                        </div>
+                                    }
+                                </div>
+                            }
+                        }
+                        else
+                        {
+                            <p class="text-muted">No learning content available.</p>
+                        }
+                    </div>
+                }
+            }
+            else
+            {
+                <p class="text-muted">No modules found for this topic.</p>
+            }
+
+            <hr />
+
+<a href="@Url.Action("Quiz", "Learning", new { topicId = Model.Id, difficulty = ViewData["Difficulty"] ?? "Beginner" })"
+   class="btn btn-success mt-3">
+    Take Quiz
+</a>
+        </div>
+    </div>
+</div>
+

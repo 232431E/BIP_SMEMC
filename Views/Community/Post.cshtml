@@ -1,0 +1,35 @@
+﻿@model BIP_SMEMC.Models.ForumThread
+
+@{
+    ViewData["Title"] = "Create Post";
+}
+
+<div class="container mt-4">
+    <h2 class="fw-bold mb-3">Create a New Forum Post</h2>
+
+    <form method="post" action="/Community/Post">
+        <div class="mb-3">
+            <label class="form-label">Category</label>
+            <input class="form-control" name="category" placeholder="e.g., Cashflow, Credit, General" required />
+        </div>
+
+        <div class="mb-3">
+            <label class="form-label">Title</label>
+            <input class="form-control" name="title" placeholder="Post title" required />
+        </div>
+
+        <div class="mb-3">
+            <label class="form-label">Content</label>
+            <textarea class="form-control" name="content" rows="5" placeholder="Write your question or discussion..." required></textarea>
+        </div>
+
+        <div class="mb-3">
+            <label class="form-label">Author</label>
+            <input class="form-control" name="author" placeholder="Anonymous" />
+        </div>
+
+        <button type="submit" class="btn btn-primary">Post</button>
+        <a href="/Community" class="btn btn-outline-secondary ms-2">Cancel</a>
+    </form>
+</div>
+
