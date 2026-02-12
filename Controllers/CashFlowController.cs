@@ -16,252 +16,233 @@ namespace BIP_SMEMC.Controllers
             _supabase = supabase;
         }
 
-
         public async Task<IActionResult> Index()
         {
-            Debug.WriteLine("=== [START] CashFlow Page Load ===");
+            Debug.WriteLine("=== [START] SMART CASHFLOW ENGINE ===");
             var model = new CashFlowViewModel();
             var userEmail = HttpContext.Session.GetString("UserEmail");
-            if (string.IsNullOrEmpty(userEmail)) return RedirectToAction("Login", "Account"); 
+            if (string.IsNullOrEmpty(userEmail)) return RedirectToAction("Login", "Account");
+
             try
             {
-                // 1.1 GET ANCHOR DATE (Fixes 0 records issue)
+                // 1. ANCHOR DATE & DATA
                 var anchorDate = await _financeService.GetLatestTransactionDate(userEmail);
                 model.LatestDataDate = anchorDate;
-                // 1.2. Set Analysis Window relative to ANCHOR
+
+                // 2. FETCH HISTORY (6 Months for Trend Analysis)
                 var startDate = anchorDate.AddMonths(-6);
-                var endDate = anchorDate;
-                // 1.3. Fetch Metadata for Checkboxes
-                var industries = (await _supabase.From<IndustryModel>().Get()).Models;
-                var regions = (await _supabase.From<RegionModel>().Get()).Models;
-                Debug.WriteLine($"[DB] Industries: {industries.Count}, Regions: {regions.Count}");
-                // FIX: Populate ViewBag so the View doesn't crash on @foreach
-                ViewBag.AllIndustries = industries;
-                ViewBag.AllRegions = regions;
+                var history = await _financeService.GetUserTransactions(userEmail, startDate, anchorDate);
 
-                // ---------------------------------------------------------
-                // NEWS RETRIEVAL LOGIC (UPDATED)
-                // ---------------------------------------------------------
-
-                // 1. Get User Preferences
-                var userRes = await _supabase.From<UserModel>().Where(u => u.Email == userEmail).Get();
-                var userPrefs = userRes.Models.FirstOrDefault();
-                model.UserPreferences = userPrefs; // For Checkboxes
-
-                // 2. Fetch ALL News from DB (Since DB is small ~100 items due to retention)
-                var allNewsRes = await _supabase.From<NewsArticleModel>()
-                    .Order("date", Postgrest.Constants.Ordering.Descending)
-                    .Limit(100)
-                    .Get();
-
-                var allNews = allNewsRes.Models;
-
-                // 3. Filter in Memory (C#) - THIS IS THE FIX YOU ASKED FOR
-                // This handles "OR" logic: (Has Industry X OR Has Region Y)
-                List<NewsArticleModel> filteredNews;
-
-                if (userPrefs != null &&
-                   ((userPrefs.Industries != null && userPrefs.Industries.Any()) ||
-                    (userPrefs.Regions != null && userPrefs.Regions.Any())))
-                {
-                    var pInds = userPrefs.Industries ?? new List<string>();
-                    var pRegs = userPrefs.Regions ?? new List<string>();
-
-                    filteredNews = allNews.Where(n =>
-                        // Article Industry overlaps with User Industry Prefs
-                        (n.Industries != null && n.Industries.Intersect(pInds, StringComparer.OrdinalIgnoreCase).Any()) ||
-                        // Article Region overlaps with User Region Prefs
-                        (n.Regions != null && n.Regions.Intersect(pRegs, StringComparer.OrdinalIgnoreCase).Any())
-                    ).ToList();
-                }
-                else
-                {
-                    // If no preferences set, show everything
-                    filteredNews = allNews.ToList();
-                }
-
-                // Take top 20 after filtering
-                model.News = filteredNews.Take(20).ToList();
-
-                // ---------------------------------------------------------
-                // TRIGGER BACKGROUND REFRESH IF EMPTY
-                // ---------------------------------------------------------
-                if (!model.News.Any())
-                {
-                    // Call the service manually if DB is empty
-                    var newsService = HttpContext.RequestServices.GetService<NewsBGService>();
-                    if (newsService != null)
-                    {
-                        await newsService.TriggerNewsCycle();
-                        // Refetch one last time
-                        model.News = (await _supabase.From<NewsArticleModel>().Order("date", Postgrest.Constants.Ordering.Descending).Limit(12).Get()).Models;
-                    }
-                }
-                // Populate ViewBag for Filter Modal
+                // 1. METADATA & PREFERENCES
+                var categoriesList = (await _supabase.From<CategoryModel>().Get()).Models;
+                var catMap = categoriesList.ToDictionary(k => k.Id, v => v);
+                // Populate ViewBags for UI
                 var indList = (await _supabase.From<IndustryModel>().Get()).Models;
                 var regList = (await _supabase.From<RegionModel>().Get()).Models;
                 ViewBag.AllIndustries = indList.OrderBy(i => i.Name).ToList();
                 ViewBag.AllRegions = regList.OrderBy(r => r.Name).ToList();
 
-                // 4. RETRIEVE LATEST OUTLOOK (Logic for "Display Latest")
-                // Fetch all outlooks sorted by Date DESC and ID DESC (assuming higher ID = newer)
-                var allOutlooks = await _supabase.From<NewsOutlookModel>()
-                    .Order("date", Postgrest.Constants.Ordering.Descending)
-                    .Order("id", Postgrest.Constants.Ordering.Descending)
-                    .Get();
+                
+                // 3. SMART TREND CALCULATION
+                // ---------------------------------------------------------
+                decimal currentCash = 0;
 
-                // In-Memory grouping to get the absolute latest version per Industry/Region pair
-                var latestOutlooks = allOutlooks.Models
-                    .GroupBy(o => new { o.Industry, o.Region })
-                    .Select(g => g.First()) // First is latest due to Sort order
-                    .ToList();
+                // Buckets for Trend Analysis
+                decimal totalRev = 0;
+                decimal totalFixed = 0;
+                decimal totalVar = 0;
+                decimal excludedOneOffs = 0; // Track anomalies
 
-                ViewBag.Outlooks = latestOutlooks;
+                // Keywords to detect anomalies that shouldn't affect future predictions
+                var anomalyKeywords = new[] { "renovation", "deposit", "setup fee", "equipment purchase", "one-time" };
 
-                // 3. Retrieve Data using Correct Window
-                var history = await _financeService.GetUserTransactions(userEmail, startDate, endDate);
-                var sortedHistory = history.OrderBy(t => t.Date).ToList();
+                var historicalPoints = new List<ChartDataPoint>();
 
-                // 4. Calculate Chart Data
-                decimal runningTotal = 0;
-                foreach (var trans in sortedHistory)
+                foreach (var t in history.OrderBy(t => t.Date))
                 {
-                    runningTotal += (trans.Credit - trans.Debit);
-                    trans.Balance = runningTotal;
+                    // A. Actual Balance (Always includes everything)
+                    currentCash += (t.Credit - t.Debit);
+
+                    historicalPoints.Add(new ChartDataPoint
+                    {
+                        Date = t.Date.ToString("yyyy-MM-dd"),
+                        Actual = currentCash
+                    });
+
+                    // B. Trend Logic (Strict Filtering)
+                    if (t.CategoryId.HasValue && catMap.TryGetValue(t.CategoryId.Value, out var cat))
+                    {
+                        string catName = cat.Name.ToLower();
+                        string desc = (t.Description ?? "").ToLower();
+                        int parentId = cat.ParentId ?? 0;
+
+                        // 1. Ignore Non-Cash (Depreciation ID 88)
+                        if (catName.Contains("depreciation") || catName.Contains("amortization")) continue;
+
+                        if (t.Debit > 0) // Expense
+                        {
+                            // 2. Detect & Exclude One-Offs from Trend
+                            if (anomalyKeywords.Any(k => catName.Contains(k) || desc.Contains(k)))
+                            {
+                                excludedOneOffs += t.Debit;
+                                continue;
+                            }
+
+                            // 3. Handle Liabilities (Loan Repayments) - ID 278 is usually Long Term Liability
+                            // Even though not an "Expense" in P&L, it burns cash.
+                            if (parentId == 278 || catName.Contains("hire purchase") || catName.Contains("loan"))
+                            {
+                                totalFixed += t.Debit;
+                            }
+                            // 4. Fixed vs Variable
+                            else if (catName.Contains("rent") || catName.Contains("salary") || catName.Contains("insurance"))
+                            {
+                                totalFixed += t.Debit;
+                            }
+                            else
+                            {
+                                totalVar += t.Debit;
+                            }
+                        }
+                        else if (t.Credit > 0) // Revenue
+                        {
+                            totalRev += t.Credit;
+                        }
+                    }
                 }
-                model.CurrentBalance = runningTotal;
 
-                // DEBUG: Log retrieval counts
-                Debug.WriteLine($"[DEBUG] Total records for {userEmail}: {history.Count}");
-                var monthsPresent = history.Select(t => t.Date.Month).Distinct();
-                Debug.WriteLine($"[DEBUG] Months found in data: {string.Join(", ", monthsPresent)}");
-                Debug.WriteLine($"[CASHFLOW DEBUG] Total History Count: {history.Count}");
-                var expenses = history.Where(t => t.Debit > 0 && t.Date.Year == 2023).ToList();
-                Debug.WriteLine($"[CASHFLOW DEBUG] 2023 Expenses: {expenses.Count}");
+                model.CurrentBalance = currentCash;
+                model.ChartData.AddRange(historicalPoints);
 
-                // 3. Filter for Chart (Last 4 months of history)
-                model.ChartData = sortedHistory
-                .Where(t => t.Date >= anchorDate.AddMonths(-4))
-                .Select(t => new ChartDataPoint
+                // 4. GENERATE PROJECTION
+                int months = 6;
+                decimal avgRev = totalRev / months;
+                decimal avgFixed = totalFixed / months;
+                decimal varRatio = totalRev > 0 ? (totalVar / totalRev) : 0;
+
+                // Debugging Trend
+                Debug.WriteLine($"[TREND] Avg Rev: {avgRev:C}, Avg Fixed: {avgFixed:C}, Var Ratio: {varRatio:P1}");
+                Debug.WriteLine($"[ANOMALY] Excluded from trend: {excludedOneOffs:C}");
+
+                // Bridge Point
+                model.ChartData.Add(new ChartDataPoint
                 {
-                    Date = t.Date.ToString("yyyy-MM-dd"),
-                    Actual = t.Balance,
-                    Predicted = null
-                }).ToList();
+                    Date = anchorDate.ToString("yyyy-MM-dd"),
+                    Actual = null,
+                    Predicted = currentCash
+                });
 
-                // 4. Current Balance is the last calculated point
-                model.CurrentBalance = runningTotal;
-                Debug.WriteLine($"[DEBUG] Manual Running Balance: {model.CurrentBalance:N2}");
+                // 30 Day Forward Projection
+                decimal projBalance = currentCash;
+                decimal dailyRev = avgRev / 30m;
+                decimal dailyFixed = avgFixed / 30m;
 
-                // 5. Generate Predictions (Next 30 Days)
-                decimal dailyNet = _financeService.CalculateAvgDailyNet(history, anchorDate.Year);
-                decimal projectionPointer = model.CurrentBalance;
                 for (int i = 1; i <= 30; i++)
                 {
-                    projectionPointer += dailyNet;
+                    decimal dailyVar = dailyRev * varRatio;
+                    decimal dailyNet = dailyRev - dailyFixed - dailyVar;
+                    projBalance += dailyNet;
+
                     model.ChartData.Add(new ChartDataPoint
                     {
                         Date = anchorDate.AddDays(i).ToString("yyyy-MM-dd"),
                         Actual = null,
-                        Predicted = projectionPointer
+                        Predicted = Math.Round(projBalance, 2)
                     });
                 }
-                // NEW: AI Analysis Integration
-                try
+
+                model.MonthlyFixedBurn = avgFixed;
+                model.VariableCostRatio = varRatio;
+                model.ProjectedCashIn30Days = projBalance;
+
+                // Runway Calc
+                decimal burnRate = (avgFixed + (avgRev * varRatio)) - avgRev;
+                model.CashRunway = burnRate > 0 && currentCash > 0
+                    ? $"{currentCash / burnRate:N1} Months"
+                    : "Stable (Cash Positive)";
+
+                // 5. FETCH NEWS (OPTIMIZED)
+                // Only fetch if preferences exist, otherwise don't slam the DB.
+                var userRes = await _supabase.From<UserModel>().Where(u => u.Email == userEmail).Get();
+                var userPrefs = userRes.Models.FirstOrDefault();
+                model.UserPreferences = userPrefs;
+
+                // Fetch outlooks specific to user preferences
+                if (userPrefs != null)
                 {
-                    // Check if we have enough data to analyze
-                    if (history.Count > 0)
-                    {
-                        var ai = HttpContext.RequestServices.GetRequiredService<GeminiService>();
-                        // Pass the history to Gemini
-                        model.AIAnalysis = await ai.AnalyzeFinancialTrends(history);
-                    }
-                    else
-                    {
-                        model.AIAnalysis = "Not enough data for AI analysis.";
-                    }
+                    var pInds = userPrefs.Industries ?? new List<string>();
+                    var pRegs = userPrefs.Regions ?? new List<string>();
+
+                    // Fetch Outlooks
+                    var outlooks = await _supabase.From<NewsOutlookModel>()
+                        .Order("date", Postgrest.Constants.Ordering.Descending)
+                        .Get();
+
+                    model.Outlooks = outlooks.Models
+                .Where(o => pInds.Contains(o.Industry) || pRegs.Contains(o.Region))
+                .GroupBy(o => new { o.Industry, o.Region }) // Deduplicate
+                .Select(g => g.First())
+                .ToList();
+
+                    // Fetch News
+                    await LoadFilteredNews(model, userPrefs);
                 }
-                catch (Exception ex)
-                {
-                    Debug.WriteLine($"[CONTROLLER AI ERROR] {ex.Message}");
-                    model.AIAnalysis = " AI is taking a break. (Error connecting to service)";
-                }
+                // Populate Dropdowns for Modal
+                ViewBag.AllIndustries = (await _supabase.From<IndustryModel>().Get()).Models.OrderBy(i => i.Name).ToList();
+                ViewBag.AllRegions = (await _supabase.From<RegionModel>().Get()).Models.OrderBy(r => r.Name).ToList();
             }
+
             catch (Exception ex)
             {
-                Debug.WriteLine($"[CRITICAL CASHFLOW PAGE ERROR] {ex.Message}");
-                Debug.WriteLine(ex.StackTrace);
+                Debug.WriteLine($"[ERROR] {ex.Message}");
             }
-            // 5. Retrieve News from DB
-            //var userProfile = await _supabase.From<UserModel>().Where(u => u.Email == userEmail).Get();
-            //model.News = await GetFilteredNews(userProfile.Models.FirstOrDefault());
 
             return View(model);
         }
 
+        // Helper to update prefs via AJAX
         [HttpPost]
         public async Task<IActionResult> UpdatePreferences(List<string> industries, List<string> regions)
         {
             var userEmail = HttpContext.Session.GetString("UserEmail");
             if (string.IsNullOrEmpty(userEmail)) return Unauthorized();
 
-            // ENHANCED DEBUGGING
-            Debug.WriteLine("--- [CRUD START] UpdatePreferences ---");
-            Debug.WriteLine($"[USER] {userEmail}");
-            Debug.WriteLine($"[DATA-IND] {(industries != null ? string.Join(", ", industries) : "NULL")}");
-            Debug.WriteLine($"[DATA-REG] {(regions != null ? string.Join(", ", regions) : "NULL")}");
-            try
+            var userRes = await _supabase.From<UserModel>().Where(u => u.Email == userEmail).Get();
+            var user = userRes.Models.FirstOrDefault();
+
+            if (user != null)
             {
-                // 1. Fetch the actual existing record first
-                var response = await _supabase.From<UserModel>()
-                    .Where(u => u.Email == userEmail)
-                    .Get();
-                var user = response.Models.FirstOrDefault();
-
-                if (user == null)
-                {
-                    Debug.WriteLine($"[ERROR] User {userEmail} not found in DB. Cannot update.");
-                    return Json(new { success = false, error = "User not found" });
-                }
-                // 2. Update the properties on the TRACKED object
-                // Note: We use .ToList() to ensure we aren't passing a reference that might get cleared
-                user.Industries = industries?.ToList() ?? new List<string>();
-                user.Regions = regions?.ToList() ?? new List<string>();
-
-                Debug.WriteLine($"[PRE-SAVE CHECK] Ind Count: {user.Industries.Count}, Reg Count: {user.Regions.Count}");
-
-                // 3. Use Update() on the specific object
-                var updateRes = await user.Update<UserModel>();
-
-                Debug.WriteLine($"[SUPABASE RAW] {updateRes.ResponseMessage.Content}"); // This shows the JSON returned by Supabase
-
+                user.Industries = industries ?? new List<string>();
+                user.Regions = regions ?? new List<string>();
+                await user.Update<UserModel>();
                 return Json(new { success = true });
             }
-            catch (Exception ex)
-            {
-                Debug.WriteLine($"[CRITICAL DB ERROR] {ex.Message}");
-                Debug.WriteLine($"[STACKTRACE] {ex.StackTrace}");
-                return Json(new { success = false, error = ex.Message });
-            }
+            return Json(new { success = false });
         }
 
-        private async Task<List<NewsArticleModel>> GetFilteredNews(UserModel user)
+        private async Task LoadFilteredNews(CashFlowViewModel model, UserModel prefs)
         {
-            // ISupabaseTable requires the underlying Table to be handled via var for chaining
-            var query = _supabase.From<NewsArticleModel>().Select("*");
-
-            if (user?.Industries != null && user.Industries.Any())
+            // Trigger BG Service if table empty
+            var count = await _supabase.From<NewsArticleModel>().Count(Postgrest.Constants.CountType.Exact);
+            if (count == 0)
             {
-                // Use overlap operator (&&) for text[]
-                query = query.Filter("industries", Postgrest.Constants.Operator.Overlap, user.Industries);
+                var bg = HttpContext.RequestServices.GetService<NewsBGService>();
+                if (bg != null) await bg.TriggerNewsCycle();
             }
 
-            var response = await query
+            var allNews = (await _supabase.From<NewsArticleModel>()
                 .Order("date", Postgrest.Constants.Ordering.Descending)
-                .Limit(12)
-                .Get();
+                .Limit(100)
+                .Get()).Models;
 
-            return response.Models;
+            var pInds = prefs?.Industries ?? new List<string>();
+            var pRegs = prefs?.Regions ?? new List<string>();
+
+            // Smart Filter: Show articles that match EITHER industry OR region
+            model.News = allNews.Where(n =>
+                (n.Industries != null && n.Industries.Intersect(pInds).Any()) ||
+                (n.Regions != null && n.Regions.Intersect(pRegs).Any())
+            ).Take(15).ToList();
         }
     }
 }

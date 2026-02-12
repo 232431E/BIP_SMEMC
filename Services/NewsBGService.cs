@@ -33,17 +33,20 @@ namespace BIP_SMEMC.Services
 
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
         {
-            await Task.Delay(5000, stoppingToken);
+            await Task.Delay(TimeSpan.FromMinutes(1), stoppingToken);
 
             while (!stoppingToken.IsCancellationRequested)
             {
                 await TriggerNewsCycle();
 
-                var now = DateTime.UtcNow.AddHours(8);
-                var nextRun = now.Date.AddDays(1).AddHours(8);
-                var delay = nextRun - now;
+                // Run every 24 hours
+                var now = DateTime.UtcNow;
+                var nextRun = now.Date.AddDays(1).AddHours(4); // Run at 4 AM UTC
+                if (nextRun < now) nextRun = nextRun.AddDays(1);
 
+                var delay = nextRun - now;
                 Debug.WriteLine($"[NEWS BG] Next run in {delay.TotalHours:F1} hours");
+
                 await Task.Delay(delay, stoppingToken);
             }
         }
@@ -73,9 +76,8 @@ namespace BIP_SMEMC.Services
                 try
                 {
                     var cutoffDate = DateTime.UtcNow.AddDays(-7).ToString("yyyy-MM-dd");
-                    await db.From<NewsArticleModel>()
-                        .Filter("date", Postgrest.Constants.Operator.LessThan, cutoffDate)
-                        .Delete();
+                    await db.From<NewsArticleModel>().Filter("date", Postgrest.Constants.Operator.LessThan, cutoffDate).Delete();
+                    await db.From<NewsOutlookModel>().Filter("date", Postgrest.Constants.Operator.LessThan, cutoffDate).Delete();
                 }
                 catch (Exception ex) { Debug.WriteLine($"[CLEANUP WARN] {ex.Message}"); }
 
@@ -134,17 +136,16 @@ namespace BIP_SMEMC.Services
                     // Inside RunDailyNewsCycle
 
                     // 6. AI Generation
-                    Debug.WriteLine("[AI] Starting Outlook Generation...");
-                    var outlooks = await ai.GenerateIndustryOutlooks(uniqueArticles,
+                    Debug.WriteLine("[AI] Starting Batch Outlook Generation...");
+                    var outlooks = await ai.GenerateIndustryOutlooks(
+                        contextNewsRes.Models,
                         industries.Select(i => i.Name).ToList(),
-                        regions.Select(r => r.Name).ToList());
+                        regions.Select(r => r.Name).ToList()
+                    );
 
-                    // Services/NewsBGService.cs -> RunDailyNewsCycle
-
-                    // ... Inside AI Generation Block ...
                     if (outlooks != null && outlooks.Any())
                     {
-                        try
+                    try
                         {
                             var targetDate = DateTime.UtcNow.Date;
                             var targetDateStr = targetDate.ToString("yyyy-MM-dd");

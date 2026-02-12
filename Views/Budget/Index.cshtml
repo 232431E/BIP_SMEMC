@@ -36,7 +36,11 @@
             <div class="card border-0 shadow-sm bg-white h-100">
                 <div class="card-body">
                     <h6 class="small text-uppercase text-muted fw-bold">Total Net Variance</h6>
-                    <h3 id="netVariance" class="fw-bold mb-0 text-dark">$0.00</h3>
+                    <h3 id="netVariance" class="fw-bold mb-2 text-dark">$0.00</h3>
+
+                    <button class="btn btn-sm btn-outline-primary w-100" onclick="autoReallocate()">
+                        <i class="bi bi-magic me-1"></i> Auto-Reallocate
+                    </button>
                 </div>
             </div>
         </div>
@@ -463,8 +467,11 @@
                 const isSelected = state.selectedCategory === item.cat.name;
                 const activeClass = isSelected ? "bg-light border-primary" : "border-light";
 
+                // Calculate Overspend for logic
+                const isOverBudget = item.actual > item.budget;
+
                 container.innerHTML += `
-                    <div class="p-3 border-bottom ${activeClass} position-relative" style="transition:background 0.2s">
+                    <div class="p-3 border-bottom ${activeClass} position-relative">
                         <div class="d-flex justify-content-between align-items-center mb-1 cursor-pointer" onclick="filterByHealthList('${item.cat.name}')">
                             <span class="fw-bold small ${isSelected ? 'text-primary' : 'text-dark'}">${item.cat.name}</span>
                             <span class="small fw-bold ${textColor}">${Math.round(item.pct)}%</span>
@@ -473,10 +480,22 @@
                             <div class="progress-bar ${color}" style="width: ${Math.min(item.pct, 100)}%"></div>
                         </div>
                         <div class="d-flex justify-content-between align-items-center extra-small text-muted">
-                            <span onclick="filterByHealthList('${item.cat.name}')" style="cursor:pointer">Spent: $${item.actual.toLocaleString()}</span>
+                            <span onclick="filterByHealthList('${item.cat.name}')" style="cursor:pointer">
+                                Spent: $${item.actual.toLocaleString()}
+                                ${isOverBudget ? '<i class="bi bi-exclamation-circle-fill text-danger ms-1"></i>' : ''}
+                            </span>
                             <div class="d-flex align-items-center gap-2">
                                 <span>Limit: $${item.budget.toLocaleString()}</span>
+
                                 <button class="btn btn-link p-0 text-primary" onclick="openBudgetModal(${item.cat.id}, ${item.budget})" title="Edit"><i class="bi bi-pencil-square"></i></button>
+
+                                ${isOverBudget ?
+                                    `<button class="btn btn-link p-0 text-success"
+                                        onclick="quickIncrease(${item.cat.id}, ${item.actual})"
+                                        title="Increase to nearest $1k">
+                                        <i class="bi bi-arrow-up-circle-fill"></i>
+                                     </button>`
+                                : ''}
                             </div>
                         </div>
                     </div>`;
@@ -548,6 +567,47 @@
             document.getElementById('pageInfoLabel').innerText = `${start + 1}-${end} of ${data.length}`;
             document.getElementById('btnPrev').parentElement.classList.toggle('disabled', state.currentPage === 1);
             document.getElementById('btnNext').parentElement.classList.toggle('disabled', state.currentPage >= Math.ceil(data.length/state.pageSize));
+        }
+
+                async function autoReallocate() {
+            if(!state.currentMonthObj) return;
+            const m = state.currentMonthObj.month;
+            const y = state.currentMonthObj.year;
+
+            if(!confirm(`Auto-balance budgets for ${state.currentMonthObj.label}? This will move funds from your best saver to cover your worst overspend.`)) return;
+
+            try {
+                const res = await fetch(`/Budget/AutoReallocate?month=${m}&year=${y}`, { method: 'POST' });
+                const json = await res.json();
+                alert(json.message);
+                if(json.success) location.reload();
+            } catch(e) { alert("Error connecting to server."); }
+        }
+
+        async function quickIncrease(catId, currentSpent) {
+            if(!state.currentMonthObj) return;
+            const m = state.currentMonthObj.month;
+            const y = state.currentMonthObj.year;
+
+            try {
+                const formData = new URLSearchParams();
+                formData.append('categoryId', catId);
+                formData.append('month', m);
+                formData.append('year', y);
+                formData.append('currentSpent', currentSpent);
+
+                const res = await fetch('/Budget/QuickIncreaseBudget', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+                    body: formData
+                });
+                const json = await res.json();
+                if(json.success) {
+                    location.reload();
+                } else {
+                    alert("Failed to update.");
+                }
+            } catch(e) { alert("Error connecting to server."); }
         }
     </script>
 }

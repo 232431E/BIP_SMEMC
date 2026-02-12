@@ -607,6 +607,11 @@ namespace BIP_SMEMC.Controllers
 
         private async Task ReplaceUser(string email, UserModel updatedUser)
         {
+            if (string.IsNullOrEmpty(updatedUser.Email))
+            {
+                updatedUser.Email = email; // Force set it if missing
+            }
+
             await _supabase.From<UserModel>().Where(x => x.Email == email).Delete();
             await _supabase.From<UserModel>().Insert(updatedUser);
         }

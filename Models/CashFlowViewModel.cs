@@ -3,15 +3,21 @@
     public class CashFlowViewModel
     {
         public List<ChartDataPoint> ChartData { get; set; } = new();
-        public List<NewsArticleModel> News { get; set; } = new(); 
-        public decimal CurrentBalance { get; set; } = 25000;
-        public decimal AvgDailyExpense { get; set; }
-        public decimal AvgDailyIncome { get; set; }
+        public List<NewsArticleModel> News { get; set; } = new();
+        
+        // --- NEW METRICS ---
+        public decimal CurrentBalance { get; set; }
+        public decimal MonthlyFixedBurn { get; set; } // Salaries, Rent, Loans
+        public decimal VariableCostRatio { get; set; } // Costs that go up when revenue goes up
+        public decimal ProjectedCashIn30Days { get; set; }
+        public string CashRunway { get; set; } // "3.5 Months" or "Stable"
+        // -------------------
 
+
+        // Preference Data for news section
         public List<NewsOutlookModel> Outlooks { get; set; } = new();
         public DateTime LatestDataDate { get; set; }
 
-        // Preference Data
         public UserModel UserPreferences { get; set; }
         public List<IndustryModel> AllIndustries { get; set; } = new();
         public List<RegionModel> AllRegions { get; set; } = new();
