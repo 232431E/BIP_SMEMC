@@ -77,6 +77,27 @@ Return ONLY a valid JSON array of objects. No markdown.
                 }
 
                 var json = await response.Content.ReadAsStringAsync();
+                // --- SAVE RAW RESPONSE TO DB ---
+                try
+                {
+                    var logEntry = new AIResponseModel
+                    {
+                        UserId = "SYSTEM_BG_SERVICE",
+                        FeatureType = "NEWS_OUTLOOK",
+                        ResponseText = json, // Save full raw JSON
+                        Justification = "Daily Outlook Generation",
+                        VersionTag = "gemini-2.5-flash",
+                        DateKey = DateTime.UtcNow.Date,
+                        CreatedAt = DateTime.UtcNow
+                    };
+                    await _db.From<AIResponseModel>().Insert(logEntry);
+                    Debug.WriteLine("[DB LOG] Saved AI raw response.");
+                }
+                catch (Exception logEx) { Debug.WriteLine($"[DB LOG FAIL] {logEx.Message}"); }
+                // --------------------------------
+
+                if (!response.IsSuccessStatusCode) return new List<NewsOutlookModel>();
+
                 return ParseOutlookResponse(json);
             }
             catch (Exception ex)
@@ -107,7 +128,7 @@ Return ONLY a valid JSON array of objects. No markdown.
                 string cleanJson = Regex.Replace(text, @"^```json\s*|\s*```$", "", RegexOptions.IgnoreCase | RegexOptions.Multiline).Trim();
 
                 // DEBUG: Print clean JSON to verify structure before deserialization
-                // Debug.WriteLine($"[CLEAN JSON PREVIEW] {cleanJson.Substring(0, Math.Min(500, cleanJson.Length))}...");
+                Debug.WriteLine($"[CLEAN JSON PREVIEW] {cleanJson.Substring(0, Math.Min(500, cleanJson.Length))}...");
 
                 var outlooks = JsonConvert.DeserializeObject<List<NewsOutlookModel>>(cleanJson);
 
@@ -122,7 +143,7 @@ Return ONLY a valid JSON array of objects. No markdown.
                 // Validate items before returning
                 foreach (var o in outlooks)
                 {
-                    o.Date = DateTime.UtcNow; // Ensure date is set
+                    o.Date = DateTime.UtcNow.Date; // Ensure date is set
                     if (o.TopLeaders == null) o.TopLeaders = new List<string>(); // Prevent null list errors
                     // Log individual items to ensure fields are mapping correctly
                     Debug.WriteLine($" -> Outlook: {o.Industry}/{o.Region} | Key Event: {o.KeyEvents?.Substring(0, Math.Min(20, o.KeyEvents?.Length ?? 0))}...");

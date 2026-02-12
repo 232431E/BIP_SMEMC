@@ -9,6 +9,7 @@
         public decimal AvgDailyIncome { get; set; }
 
         public List<NewsOutlookModel> Outlooks { get; set; } = new();
+        public DateTime LatestDataDate { get; set; }
 
         // Preference Data
         public UserModel UserPreferences { get; set; }

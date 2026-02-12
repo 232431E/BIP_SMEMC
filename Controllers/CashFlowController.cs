@@ -24,12 +24,13 @@ namespace BIP_SMEMC.Controllers
             var userEmail = User.Identity?.Name ?? "dummy@sme.com";
             try
             {
-                // 1. DYNAMIC ANCHOR: Find the most recent date in the ledger
-                var latestDate = await _financeService.GetLatestTransactionDate(userEmail);
-                // Set sim date to match data reality
-                var currentSimDate = latestDate;
-
-                // 1. Fetch Metadata for Checkboxes
+                // 1.1 GET ANCHOR DATE (Fixes 0 records issue)
+                var anchorDate = await _financeService.GetLatestTransactionDate(userEmail);
+                model.LatestDataDate = anchorDate;
+                // 1.2. Set Analysis Window relative to ANCHOR
+                var startDate = anchorDate.AddMonths(-6);
+                var endDate = anchorDate;
+                // 1.3. Fetch Metadata for Checkboxes
                 var industries = (await _supabase.From<IndustryModel>().Get()).Models;
                 var regions = (await _supabase.From<RegionModel>().Get()).Models;
                 Debug.WriteLine($"[DB] Industries: {industries.Count}, Regions: {regions.Count}");
@@ -101,27 +102,33 @@ namespace BIP_SMEMC.Controllers
                 ViewBag.AllIndustries = indList.OrderBy(i => i.Name).ToList();
                 ViewBag.AllRegions = regList.OrderBy(r => r.Name).ToList();
 
-                // Get Outlooks
-                var outlookRes = await _supabase.From<NewsOutlookModel>().Get();
-                // Filter outlooks relevant to user
-                var relOutlook = outlookRes.Models.Where(o =>
-                     (userPrefs?.Industries?.Contains(o.Industry) == true) ||
-                     (userPrefs?.Regions?.Contains(o.Region) == true)
-                ).ToList();
-                ViewBag.Outlooks = relOutlook;
+                // 4. RETRIEVE LATEST OUTLOOK (Logic for "Display Latest")
+                // Fetch all outlooks sorted by Date DESC and ID DESC (assuming higher ID = newer)
+                var allOutlooks = await _supabase.From<NewsOutlookModel>()
+                    .Order("date", Postgrest.Constants.Ordering.Descending)
+                    .Order("id", Postgrest.Constants.Ordering.Descending)
+                    .Get();
 
-                // 1. Retrieve Data (Ordered by Date ASCENDING for running total calculation)
-                var history = await _financeService.GetUserTransactions(userEmail, latestDate.AddMonths(-6), latestDate);
-                // Sort Ascending to calculate the flow correctly
+                // In-Memory grouping to get the absolute latest version per Industry/Region pair
+                var latestOutlooks = allOutlooks.Models
+                    .GroupBy(o => new { o.Industry, o.Region })
+                    .Select(g => g.First()) // First is latest due to Sort order
+                    .ToList();
+
+                ViewBag.Outlooks = latestOutlooks;
+
+                // 3. Retrieve Data using Correct Window
+                var history = await _financeService.GetUserTransactions(userEmail, startDate, endDate);
                 var sortedHistory = history.OrderBy(t => t.Date).ToList();
 
-                // 2. Manual Running Balance Calculation (If DB balance is 0)
+                // 4. Calculate Chart Data
                 decimal runningTotal = 0;
                 foreach (var trans in sortedHistory)
                 {
                     runningTotal += (trans.Credit - trans.Debit);
                     trans.Balance = runningTotal;
                 }
+                model.CurrentBalance = runningTotal;
 
                 // DEBUG: Log retrieval counts
                 Debug.WriteLine($"[DEBUG] Total records for {userEmail}: {history.Count}");
@@ -133,7 +140,7 @@ namespace BIP_SMEMC.Controllers
 
                 // 3. Filter for Chart (Last 4 months of history)
                 model.ChartData = sortedHistory
-                .Where(t => t.Date >= latestDate.AddMonths(-4))
+                .Where(t => t.Date >= anchorDate.AddMonths(-4))
                 .Select(t => new ChartDataPoint
                 {
                     Date = t.Date.ToString("yyyy-MM-dd"),
@@ -146,14 +153,14 @@ namespace BIP_SMEMC.Controllers
                 Debug.WriteLine($"[DEBUG] Manual Running Balance: {model.CurrentBalance:N2}");
 
                 // 5. Generate Predictions (Next 30 Days)
-                decimal dailyNet = _financeService.CalculateAvgDailyNet(history, latestDate.Year);
+                decimal dailyNet = _financeService.CalculateAvgDailyNet(history, anchorDate.Year);
                 decimal projectionPointer = model.CurrentBalance;
                 for (int i = 1; i <= 30; i++)
                 {
                     projectionPointer += dailyNet;
                     model.ChartData.Add(new ChartDataPoint
                     {
-                        Date = latestDate.AddDays(i).ToString("yyyy-MM-dd"),
+                        Date = anchorDate.AddDays(i).ToString("yyyy-MM-dd"),
                         Actual = null,
                         Predicted = projectionPointer
                     });
@@ -190,16 +197,7 @@ namespace BIP_SMEMC.Controllers
 
             return View(model);
         }
-        //// 1. Calculate Seasonality (Average growth for this specific month in previous years)
-        //double seasonalFactor = _financeService.CalculateSeasonality(history, DateTime.Now.Month);
 
-        //// 2. Identify Constant Supplier Payments
-        //var recurringExpenses = history
-        //    .Where(t => t.Type == "Expense")
-        //    .GroupBy(t => t.Description)
-        //    .Where(g => g.Count() >= 3) // Appears at least 3 times
-        //    .Select(g => g.Average(x => x.Debit))
-        //    .Sum();
         [HttpPost]
         public async Task<IActionResult> UpdatePreferences(List<string> industries, List<string> regions)
         {

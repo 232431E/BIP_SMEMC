@@ -214,13 +214,15 @@
         const currentBalance = @Model.CurrentBalance;
         let chartInstance = null;
 
-        // Find the "Latest Actual" date to anchor our view
-        const lastActualItem = fullData.filter(d => d.actual !== null).pop();
-        // Fallback to today if no data
-        const anchorDate = lastActualItem ? new Date(lastActualItem.date) : new Date();
+        // --- ANCHOR DATE FIX ---
+        const anchorDateStr = "@Model.LatestDataDate.ToString("yyyy-MM-dd")";
+        // If model is empty, fallback to today, but log a warning
+        const anchorDate = anchorDateStr ? new Date(anchorDateStr) : new Date();
 
+        console.log("Chart Anchor Date:", anchorDate.toLocaleDateString());
         document.addEventListener("DOMContentLoaded", () => {
             // Default View: 3M button (2 Months Back, 1 Month Forward)
+            // Pass the anchorDate to the update function implicitly via logic
             updateChartWindow(2, 1, document.querySelectorAll('.btn-group button')[0]);
         });
 
@@ -301,23 +303,20 @@
             });
         }
 
-        // --- 3. FILTER LOGIC (UPDATED TO "HISTORY + PREDICTION" PATTERN) ---
+        // --- 3. FILTER LOGIC (UPDATED TO USE ANCHOR) ---
         function updateChartWindow(monthsBack, monthsForward, btnElement) {
-            // Update UI
             if(btnElement) {
                 document.querySelectorAll('.btn-group button').forEach(b => b.classList.remove('active'));
                 btnElement.classList.add('active');
             }
 
-            // Calculate Start Date (Anchor - Months Back)
+            // USE ANCHOR DATE instead of new Date()
             const startDate = new Date(anchorDate);
             startDate.setMonth(startDate.getMonth() - monthsBack);
 
-            // Calculate End Date (Anchor + Months Forward)
             const endDate = new Date(anchorDate);
             endDate.setMonth(endDate.getMonth() + monthsForward);
 
-            // Filter the full dataset
             const filtered = fullData.filter(d => {
                 const dDate = new Date(d.date);
                 return dDate >= startDate && dDate <= endDate;
@@ -325,7 +324,6 @@
 
             renderChart(filtered);
 
-            // Re-run simulation if active to match new window
             if(document.getElementById('scenRevenue').value) runSimulation();
         }
 
@@ -340,10 +338,8 @@
                 return date >= start && date <= end;
             });
 
-            document.querySelectorAll('.btn-group button').forEach(b => b.classList.remove('active'));
             renderChart(filtered);
         }
-
         // --- 4. SIMULATION LOGIC ---
         function runSimulation() {
             // 1. Get Inputs

@@ -12,6 +12,51 @@ namespace BIP_SMEMC.Services
             _supabase = supabase;
         }
 
+        // Services/FinanceService.cs
+
+        public async Task<DateTime> GetLatestTransactionDate(string userEmail)
+        {
+            try
+            {
+                // 1. Try fetching the very last transaction for this user
+                var res = await _supabase.From<TransactionModel>()
+                    .Where(x => x.UserId == userEmail)
+                    .Order("date", Postgrest.Constants.Ordering.Descending)
+                    .Limit(1)
+                    .Get();
+
+                var lastTx = res.Models.FirstOrDefault();
+
+                if (lastTx != null)
+                {
+                    Debug.WriteLine($"[DATE ANCHOR] Found latest data at: {lastTx.Date:yyyy-MM-dd}");
+                    return lastTx.Date;
+                }
+
+                // 2. FALLBACK STRATEGY: If user has no data, check for ANY data in the system (Simulation Mode)
+                // This is crucial if you are logging in as a new user but want to see the "Demo" timeline (2023)
+                var globalRes = await _supabase.From<TransactionModel>()
+                    .Order("date", Postgrest.Constants.Ordering.Descending)
+                    .Limit(1)
+                    .Get();
+
+                var globalLast = globalRes.Models.FirstOrDefault();
+                if (globalLast != null)
+                {
+                    Debug.WriteLine($"[DATE ANCHOR] User has no data. Using Global Anchor: {globalLast.Date:yyyy-MM-dd}");
+                    return globalLast.Date;
+                }
+
+                Debug.WriteLine("[DATE ANCHOR] No data found in DB. Defaulting to DateTime.Now");
+                return DateTime.Now;
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"[DATE ANCHOR ERROR] {ex.Message}");
+                return DateTime.Now;
+            }
+        }
+
         public async Task<List<TransactionModel>> GetUserTransactions(string userEmail, DateTime startDate, DateTime endDate)
         {
             var allResults = new List<TransactionModel>();
@@ -19,7 +64,7 @@ namespace BIP_SMEMC.Services
             int offset = 0;
             bool hasMore = true;
 
-            Debug.WriteLine($"[DB FETCH] Starting batch retrieval: {startDate:yyyy-MM-dd} to {endDate:yyyy-MM-dd}");
+            Debug.WriteLine($"[DB FETCH] Requesting Range: {startDate:yyyy-MM-dd} to {endDate:yyyy-MM-dd}");
 
             while (hasMore)
             {
@@ -30,7 +75,7 @@ namespace BIP_SMEMC.Services
                         .Filter("date", Postgrest.Constants.Operator.GreaterThanOrEqual, startDate.ToString("yyyy-MM-dd"))
                         .Filter("date", Postgrest.Constants.Operator.LessThanOrEqual, endDate.ToString("yyyy-MM-dd"))
                         .Order("date", Postgrest.Constants.Ordering.Descending)
-                        .Range(offset, offset + pageSize - 1) // Critical for getting > 1000 rows
+                        .Range(offset, offset + pageSize - 1)
                         .Get();
 
                     if (response.Models.Any())
@@ -39,7 +84,7 @@ namespace BIP_SMEMC.Services
                         offset += pageSize;
                         Debug.WriteLine($"[DB FETCH] Batch {offset / pageSize}: Retrieved {response.Models.Count} rows.");
 
-                        if (response.Models.Count < pageSize) hasMore = false; // End of data
+                        if (response.Models.Count < pageSize) hasMore = false;
                     }
                     else
                     {
@@ -55,23 +100,6 @@ namespace BIP_SMEMC.Services
             Debug.WriteLine($"[DB FETCH] Total Retrieved: {allResults.Count}");
             return allResults;
         }
-
-       
-        public async Task<DateTime> GetLatestTransactionDate(string userEmail)
-        {
-            var response = await _supabase.From<TransactionModel>()
-                .Where(x => x.UserId == userEmail)
-                .Order("date", Postgrest.Constants.Ordering.Descending)
-                .Limit(1)
-                .Get();
-
-            var latest = response.Models.FirstOrDefault();
-
-            // If we have data, return that date. If not, return real Today.
-            return latest != null ? latest.Date : DateTime.Today;
-        }
-
-
         // COMPLEX LOGIC: Seasonal changes based on historical monthly averages
         public double CalculateSeasonality(List<TransactionModel> history, int month)
         {
@@ -105,7 +133,7 @@ namespace BIP_SMEMC.Services
                 FeatureType = feature,
                 ResponseText = text,
                 Justification = justification,
-                VersionTag = "gemini-1.5-flash", // Or DateTime.Now.ToString("v.yyyyMMdd")
+                VersionTag = "gemini-2.5-flash", // Or DateTime.Now.ToString("v.yyyyMMdd")
                 DateKey = DateTime.UtcNow.Date,  // CRITICAL: Required by your DB schema
                 CreatedAt = DateTime.UtcNow
             };

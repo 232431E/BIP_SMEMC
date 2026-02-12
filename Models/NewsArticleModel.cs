@@ -1,4 +1,6 @@
-﻿using Postgrest.Models;
+﻿using Newtonsoft.Json;
+using Postgrest.Models;
+using Postgrest.Attributes;
 using System.ComponentModel.DataAnnotations.Schema;
 namespace BIP_SMEMC.Models
 {
@@ -45,14 +47,33 @@ namespace BIP_SMEMC.Models
     }
 
     [Postgrest.Attributes.Table("news_outlook")]
-    public class NewsOutlookModel : Postgrest.Models.BaseModel
+    public class NewsOutlookModel : BaseModel
     {
-        [Postgrest.Attributes.PrimaryKey("id", false)] public int Id { get; set; }
-        [Postgrest.Attributes.Column("industry")] public string Industry { get; set; }
-        [Postgrest.Attributes.Column("region")] public string Region { get; set; }
-        [Postgrest.Attributes.Column("outlook_summary")] public string OutlookSummary { get; set; }
-        [Postgrest.Attributes.Column("key_events")] public string KeyEvents { get; set; } // Added for extensive research
-        [Postgrest.Attributes.Column("top_leaders")] public List<string> TopLeaders { get; set; } = new();
-        [Postgrest.Attributes.Column("date")] public DateTime Date { get; set; }
+        [Postgrest.Attributes.PrimaryKey("id", false)]
+        public int Id { get; set; }
+
+        [Postgrest.Attributes.Column("industry")]
+        [JsonProperty("industry")] // Ensures Gemini JSON maps to this C# prop
+        public string Industry { get; set; }
+
+        [Postgrest.Attributes.Column("region")]
+        [JsonProperty("region")]
+        public string Region { get; set; }
+
+        [Postgrest.Attributes.Column("outlook_summary")]
+        [JsonProperty("outlook_summary")]
+        public string OutlookSummary { get; set; }
+
+        [Postgrest.Attributes.Column("key_events")]
+        [JsonProperty("key_events")]
+        public string KeyEvents { get; set; }
+
+        [Postgrest.Attributes.Column("top_leaders")]
+        [JsonProperty("top_leaders")]
+        public List<string> TopLeaders { get; set; } = new();
+
+        [Postgrest.Attributes.Column("date")]
+        [JsonIgnore] // Don't expect this from Gemini, we set it manually
+        public DateTime Date { get; set; }
     }
 }

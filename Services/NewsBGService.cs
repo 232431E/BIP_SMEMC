@@ -131,20 +131,50 @@ namespace BIP_SMEMC.Services
 
                 if (contextNews.Any())
                 {
-                    Debug.WriteLine($"[AI START] Generating Outlooks using {contextNews.Count} context articles...");
+                    // Inside RunDailyNewsCycle
 
-                    var outlooks = await ai.GenerateIndustryOutlooks(contextNews,
+                    // 6. AI Generation
+                    Debug.WriteLine("[AI] Starting Outlook Generation...");
+                    var outlooks = await ai.GenerateIndustryOutlooks(uniqueArticles,
                         industries.Select(i => i.Name).ToList(),
                         regions.Select(r => r.Name).ToList());
 
+                    // Services/NewsBGService.cs -> RunDailyNewsCycle
+
+                    // ... Inside AI Generation Block ...
                     if (outlooks != null && outlooks.Any())
                     {
-                        // Refresh Outlook Table
-                        await db.From<NewsOutlookModel>()
-                            .Filter("id", Postgrest.Constants.Operator.GreaterThan, 0)
-                            .Delete();
-                        await db.From<NewsOutlookModel>().Insert(outlooks);
-                        Debug.WriteLine($"[AI SUCCESS] Generated & Saved {outlooks.Count} outlooks.");
+                        try
+                        {
+                            var targetDate = DateTime.UtcNow.Date;
+                            var targetDateStr = targetDate.ToString("yyyy-MM-dd");
+
+                            // 1. Assign Date to models
+                            foreach (var o in outlooks) o.Date = targetDate;
+
+                            // 2. SAVE NEW VERSION (Append, do not delete today's data)
+                            // This creates multiple entries for the same day/industry/region if run multiple times.
+                            await db.From<NewsOutlookModel>().Insert(outlooks);
+                            Debug.WriteLine($"[AI SUCCESS] Saved {outlooks.Count} outlooks for {targetDateStr}.");
+
+                            // 3. RETENTION POLICY: Delete Outlooks older than 7 days
+                            var cutoffDate = targetDate.AddDays(-7).ToString("yyyy-MM-dd");
+
+                            await db.From<NewsOutlookModel>()
+                                .Filter("date", Postgrest.Constants.Operator.LessThan, cutoffDate)
+                                .Delete();
+
+                            Debug.WriteLine($"[DB CLEANUP] Deleted outlooks older than {cutoffDate}");
+
+                            // 4. RETENTION POLICY: News Articles
+                            await db.From<NewsArticleModel>()
+                                .Filter("date", Postgrest.Constants.Operator.LessThan, cutoffDate)
+                                .Delete();
+                        }
+                        catch (Exception dbEx)
+                        {
+                            Debug.WriteLine($"[DB SAVE ERROR] {dbEx.Message}");
+                        }
                     }
                     else
                     {
