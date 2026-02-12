@@ -1,0 +1,99 @@
+﻿@model BIP_SMEMC.Models.AccountSettingsViewModel
+@{
+    ViewData["Title"] = "Account Settings";
+    var pendingSecret = Context.Session.GetString("PendingAuthenticatorSecret");
+}
+
+<div class="container py-4">
+    <h1 class="h3 mb-4">Account Settings</h1>
+    @if (TempData["ErrorMessage"] != null)
+    {
+        <div class="alert alert-danger">@TempData["ErrorMessage"]</div>
+    }
+
+    <div class="row g-4">
+        <div class="col-lg-5">
+            <div class="card border-0 shadow-sm">
+                <div class="card-body">
+                    <h2 class="h5">Profile</h2>
+                    <dl class="row small mb-0">
+                        <dt class="col-4">Email</dt>
+                        <dd class="col-8">@Model.Email</dd>
+                        <dt class="col-4">Role</dt>
+                        <dd class="col-8">@Model.Role</dd>
+                        <dt class="col-4">Industry</dt>
+                        <dd class="col-8">@Model.Industry</dd>
+                    </dl>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-lg-7">
+            <div class="card border-0 shadow-sm">
+                <div class="card-body">
+                    <h2 class="h5">Two-Factor Authentication</h2>
+                    <p class="small text-muted">
+                        Status: <strong>@(Model.IsTwoFactorEnabled ? "Enabled" : "Disabled")</strong>
+                        (@Model.TwoFactorMethod)
+                    </p>
+
+                    <div class="d-flex flex-wrap gap-2 mb-3">
+                        <form asp-action="EnableEmail2Fa" method="post">
+                            <button class="btn btn-outline-primary btn-sm">Enable Email 2FA</button>
+                        </form>
+                        <form asp-action="Disable2Fa" method="post">
+                            <button class="btn btn-outline-danger btn-sm">Disable 2FA</button>
+                        </form>
+                    </div>
+
+                    <hr />
+                    <h3 class="h6">Authenticator App Setup</h3>
+                    <form asp-action="StartAuthenticatorSetup" method="post" class="mb-3">
+                        <button class="btn btn-outline-secondary btn-sm">Generate Setup Secret</button>
+                    </form>
+
+                    @if (!string.IsNullOrWhiteSpace(pendingSecret))
+                    {
+                        <div class="alert alert-info small">
+                            <div><strong>Secret:</strong> <code>@pendingSecret</code></div>
+                            @if (!string.IsNullOrWhiteSpace(Model.AuthenticatorUri))
+                            {
+                                <div class="mt-1"><strong>OTP URI:</strong> <code>@Model.AuthenticatorUri</code></div>
+                            }
+                            <div class="mt-2">Add this secret in Google/Microsoft Authenticator, then confirm with a code.</div>
+                        </div>
+                        <form asp-action="ConfirmAuthenticatorSetup" method="post">
+                            <div class="input-group">
+                                <input type="text" name="code" class="form-control" placeholder="6-digit code" />
+                                <button class="btn btn-primary" type="submit">Confirm App 2FA</button>
+                            </div>
+                        </form>
+                    }
+                    else if (!string.IsNullOrWhiteSpace(Model.AuthenticatorSecret))
+                    {
+                        <div class="alert alert-success small mb-0">
+                            Authenticator app is configured.
+                            <br />
+                            <code>@Model.AuthenticatorSecret</code>
+                            @if (!string.IsNullOrWhiteSpace(Model.AuthenticatorUri))
+                            {
+                                <br />
+                                <code>@Model.AuthenticatorUri</code>
+                            }
+                        </div>
+                    }
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="card border-0 shadow-sm mt-4">
+        <div class="card-body">
+            <h2 class="h5 text-danger">Danger Zone</h2>
+            <p class="small text-muted mb-3">Delete your own account permanently.</p>
+            <form asp-action="DeleteMyAccount" method="post" onsubmit="return confirm('Delete your account permanently?');">
+                <button class="btn btn-outline-danger" type="submit">Delete My Account</button>
+            </form>
+        </div>
+    </div>
+</div>

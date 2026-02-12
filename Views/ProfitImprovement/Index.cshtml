@@ -1,0 +1,260 @@
+﻿@model BIP_SMEMC.ViewModels.ProfitImprovement.ProfitImprovementPageViewModel
+@{
+    ViewData["Title"] = "Profit Improvement";
+}
+
+<div class="container-fluid py-4">
+    <div class="d-flex flex-wrap justify-content-between align-items-center gap-3 mb-3">
+        <div>
+            <h1 class="h3 mb-1">Profit Improvement</h1>
+            <p class="text-muted mb-0">Year @Model.SelectedYear financial diagnosis and action plan.</p>
+        </div>
+        <form method="get" class="d-flex gap-2 align-items-center">
+            <label class="form-label mb-0">Report Year</label>
+            <select name="year" class="form-select" style="width: 150px;" onchange="this.form.submit()">
+                @foreach (var y in Model.AvailableYears)
+                {
+                    <option value="@y" selected="@(y == Model.SelectedYear ? "selected" : null)">@y</option>
+                }
+            </select>
+        </form>
+    </div>
+
+    <div class="row g-3 mb-4">
+        <div class="col-md-2">
+            <div class="card p-3 h-100">
+                <small class="text-muted">Revenue</small>
+                <h5 class="text-success mb-0">$@Model.Revenue.ToString("N2")</h5>
+            </div>
+        </div>
+        <div class="col-md-2">
+            <div class="card p-3 h-100">
+                <small class="text-muted">Expenses</small>
+                <h5 class="text-danger mb-0">$@Model.Expenses.ToString("N2")</h5>
+            </div>
+        </div>
+        <div class="col-md-2">
+            <div class="card p-3 h-100">
+                <small class="text-muted">Current Profit</small>
+                <h5 class="text-primary mb-0">$@Model.CurrentProfit.ToString("N2")</h5>
+            </div>
+        </div>
+        <div class="col-md-2">
+            <div class="card p-3 h-100">
+                <small class="text-muted">Profit Margin</small>
+                <h5 class="mb-0">@Model.ProfitMargin.ToString("N2")%</h5>
+            </div>
+        </div>
+        <div class="col-md-2">
+            <div class="card p-3 h-100">
+                <small class="text-muted">Completed Savings</small>
+                <h5 class="text-info mb-0" id="completedSavings">$@Model.CompletedSavings.ToString("N2")</h5>
+            </div>
+        </div>
+        <div class="col-md-2">
+            <div class="card p-3 h-100">
+                <small class="text-muted">Cash / Liabilities</small>
+                <h6 class="mb-0">$@Model.Cash.ToString("N0") / $@Model.Liabilities.ToString("N0")</h6>
+            </div>
+        </div>
+    </div>
+
+    <div class="row g-3 mb-4">
+        <div class="col-lg-6">
+            <div class="card h-100">
+                <div class="card-body">
+                    <h2 class="h5">Set Profit Goal</h2>
+                    <div class="row g-2">
+                        <div class="col-md-6">
+                            <label class="form-label">Target Profit</label>
+                            <input id="targetProfit" class="form-control" type="number" step="0.01" value="@Model.Goal.TargetProfit" />
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label">Deadline</label>
+                            <input id="deadline" class="form-control" type="date" value="@(Model.Goal.Deadline?.ToString("yyyy-MM-dd") ?? string.Empty)" />
+                        </div>
+                    </div>
+                    <button class="btn btn-primary mt-3" type="button" onclick="setGoal()">Set Goal</button>
+                    <div class="alert alert-secondary mt-3 mb-0" id="goalAssessment">
+                        <strong>@Model.Goal.Label</strong><br />
+                        @Model.Goal.Explanation
+                        @if (Model.Goal.RequiredMonthlyIncrease > 0)
+                        {
+                            <div class="small mt-1">Required monthly increase: $@Model.Goal.RequiredMonthlyIncrease.ToString("N2")</div>
+                        }
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="col-lg-6">
+            <div class="card h-100">
+                <div class="card-body">
+                    <h2 class="h5">Top Expense Categories</h2>
+                    @if (Model.TopExpenseCategories.Any())
+                    {
+                        <ul class="list-group list-group-flush">
+                            @foreach (var exp in Model.TopExpenseCategories)
+                            {
+                                <li class="list-group-item d-flex justify-content-between align-items-center px-0">
+                                    <span>@exp.Category</span>
+                                    <strong>$@exp.Amount.ToString("N2")</strong>
+                                </li>
+                            }
+                        </ul>
+                    }
+                    else
+                    {
+                        <p class="text-muted mb-0">No expense breakdown available.</p>
+                    }
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="card-body">
+            <h2 class="h5">Diagnosis and Recommended Fixes</h2>
+            <div class="row g-3">
+                @foreach (var fix in Model.FixCards)
+                {
+                    <div class="col-lg-6">
+                        <div class="card h-100">
+                            <div class="card-body">
+                                <div class="d-flex justify-content-between align-items-start gap-2">
+                                    <h3 class="h6 mb-2">@fix.Title</h3>
+                                    <span class="badge bg-light text-dark border">@fix.Status</span>
+                                </div>
+                                <p class="small text-muted mb-2">@fix.WhyItMatters</p>
+                                <p class="small mb-2"><strong>Steps:</strong> @fix.Steps</p>
+                                <p class="small mb-3"><strong>Estimated annual impact:</strong> $@fix.EstimatedAnnualImpact.ToString("N2")</p>
+
+                                <div class="d-flex gap-2 flex-wrap">
+                                    @if (fix.Status == "Suggested")
+                                    {
+                                        <button type="button" class="btn btn-outline-primary btn-sm" onclick="startFix('@fix.Id')">Start this fix</button>
+                                    }
+                                    @if (fix.Status != "Completed")
+                                    {
+                                        <button type="button" class="btn btn-primary btn-sm" onclick="openCompleteModal('@fix.Id', @fix.EstimatedAnnualImpact)">Mark as completed</button>
+                                    }
+                                    @if (fix.Status == "Completed")
+                                    {
+                                        <span class="small text-success">Realized savings: $@(fix.RealizedSavings?.ToString("N2") ?? "0.00")</span>
+                                    }
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                }
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="modal fade" id="goalModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Goal set</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body" id="goalModalContent"></div>
+        </div>
+    </div>
+</div>
+
+<div class="modal fade" id="completeFixModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Complete Fix</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <input type="hidden" id="completeFixId" />
+                <label class="form-label">Realized savings amount</label>
+                <input type="number" class="form-control" id="realizedSavings" step="0.01" />
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button class="btn btn-primary" type="button" onclick="completeFix()">Confirm</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+@section Scripts {
+    <script>
+        const selectedYear = @Model.SelectedYear;
+        let completeModal;
+
+        document.addEventListener("DOMContentLoaded", () => {
+            completeModal = new bootstrap.Modal(document.getElementById("completeFixModal"));
+        });
+
+        async function setGoal() {
+            const payload = new URLSearchParams({
+                reportYear: selectedYear,
+                targetProfit: document.getElementById("targetProfit").value,
+                deadline: document.getElementById("deadline").value
+            });
+
+            const res = await fetch("/ProfitImprovement/SetGoal", {
+                method: "POST",
+                headers: { "Content-Type": "application/x-www-form-urlencoded" },
+                body: payload
+            });
+
+            const result = await res.json();
+            if (!result.success) {
+                alert(result.message || "Unable to set goal.");
+                return;
+            }
+
+            const goal = result.goal;
+            document.getElementById("goalAssessment").innerHTML = `<strong>${goal.label}</strong><br>${goal.explanation}<div class="small mt-1">Required monthly increase: $${Number(goal.requiredMonthlyIncrease).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>`;
+            document.getElementById("goalModalContent").innerHTML = `Target profit: <strong>$${Number(goal.targetProfit).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong><br>Deadline: <strong>${String(goal.deadline).substring(0, 10)}</strong>`;
+            new bootstrap.Modal(document.getElementById("goalModal")).show();
+        }
+
+        async function startFix(fixId) {
+            const payload = new URLSearchParams({ fixId });
+            await fetch("/ProfitImprovement/StartFix", {
+                method: "POST",
+                headers: { "Content-Type": "application/x-www-form-urlencoded" },
+                body: payload
+            });
+            window.location.reload();
+        }
+
+        function openCompleteModal(fixId, estimatedImpact) {
+            document.getElementById("completeFixId").value = fixId;
+            document.getElementById("realizedSavings").value = Number(estimatedImpact / 12).toFixed(2);
+            completeModal.show();
+        }
+
+        async function completeFix() {
+            const payload = new URLSearchParams({
+                fixId: document.getElementById("completeFixId").value,
+                realizedSavings: document.getElementById("realizedSavings").value
+            });
+
+            const res = await fetch("/ProfitImprovement/CompleteFix", {
+                method: "POST",
+                headers: { "Content-Type": "application/x-www-form-urlencoded" },
+                body: payload
+            });
+
+            const result = await res.json();
+            if (!result.success) {
+                alert("Unable to complete fix.");
+                return;
+            }
+
+            document.getElementById("completedSavings").innerText = "$" + Number(result.completedSavings).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+            completeModal.hide();
+            window.location.reload();
+        }
+    </script>
+}
+

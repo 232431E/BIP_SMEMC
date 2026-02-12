@@ -1,0 +1,43 @@
+﻿@model BIP_SMEMC.Models.LoginViewModel
+@{
+    ViewData["Title"] = "Login";
+}
+
+<div class="row justify-content-center align-items-center min-vh-100">
+    <div class="col-md-6 col-lg-5">
+        <div class="card border-0 shadow-lg">
+            <div class="card-body p-4 p-md-5">
+                <h1 class="h3 fw-bold mb-1">Welcome Back</h1>
+                <p class="text-muted small mb-4">SME Finance Assistant secure login</p>
+
+                @if (TempData["SuccessMessage"] != null)
+                {
+                    <div class="alert alert-success">@TempData["SuccessMessage"]</div>
+                }
+                @if (ViewBag.ErrorMessage != null)
+                {
+                    <div class="alert alert-danger">@ViewBag.ErrorMessage</div>
+                }
+                <div asp-validation-summary="ModelOnly" class="text-danger small mb-2"></div>
+
+                <form method="post" asp-action="Login">
+                    <div class="mb-3">
+                        <label asp-for="Email" class="form-label">Email</label>
+                        <input asp-for="Email" class="form-control form-control-lg" type="email" />
+                        <span asp-validation-for="Email" class="text-danger small"></span>
+                    </div>
+                    <div class="mb-3">
+                        <label asp-for="Password" class="form-label">Password</label>
+                        <input asp-for="Password" class="form-control form-control-lg" type="password" />
+                        <span asp-validation-for="Password" class="text-danger small"></span>
+                    </div>
+                    <div class="d-flex justify-content-between align-items-center mb-4">
+                        <a asp-action="ForgotPassword" class="small">Forgot password?</a>
+                        <a asp-action="Signup" class="small">Create account</a>
+                    </div>
+                    <button type="submit" class="btn btn-primary btn-lg w-100">Login</button>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>

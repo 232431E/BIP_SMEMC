@@ -1,0 +1,100 @@
+﻿@model BIP_SMEMC.Models.ChatbotPageViewModel
+
+<div class="container-fluid p-4">
+    <div class="row g-4">
+        <div class="col-lg-5">
+            <div class="card border-0 shadow-sm">
+                <div class="card-body">
+                    <h1 class="h4 mb-3">Financial Report Input</h1>
+                    <p class="text-muted small">Submit your yearly report first. Then ask follow-up questions.</p>
+                    <div class="mb-3">
+                        <label class="form-label">Year</label>
+                        <input id="year" class="form-control" type="number" value="@DateTime.Today.Year" />
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Revenue</label>
+                        <input id="revenue" class="form-control" type="number" step="0.01" />
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Expenses</label>
+                        <input id="expenses" class="form-control" type="number" step="0.01" />
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Profit Margin (%)</label>
+                        <input id="profitMargin" class="form-control" type="number" step="0.01" />
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Notes</label>
+                        <textarea id="notes" class="form-control" rows="3"></textarea>
+                    </div>
+                    <button class="btn btn-primary w-100" onclick="analyzeReport()">Analyze Report</button>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-lg-7">
+            <div class="card border-0 shadow-sm mb-3">
+                <div class="card-body">
+                    <h2 class="h5">AI Insight</h2>
+                    <pre id="insightBox" class="small bg-light p-3 rounded" style="white-space: pre-wrap;">Submit your report to get insight.</pre>
+                </div>
+            </div>
+
+            <div class="card border-0 shadow-sm">
+                <div class="card-body">
+                    <h2 class="h5">Chat with Assistant</h2>
+                    <div class="input-group">
+                        <input id="chatMessage" class="form-control" placeholder="Ask a follow-up question..." />
+                        <button class="btn btn-outline-primary" onclick="sendMessage()">Send</button>
+                    </div>
+                    <pre id="chatAnswer" class="small bg-light p-3 rounded mt-3" style="white-space: pre-wrap;">No chat yet.</pre>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+@section Scripts {
+    <script>
+        async function analyzeReport() {
+            const payload = {
+                year: Number(document.getElementById("year").value),
+                revenue: Number(document.getElementById("revenue").value),
+                expenses: Number(document.getElementById("expenses").value),
+                profitMargin: Number(document.getElementById("profitMargin").value),
+                notes: document.getElementById("notes").value
+            };
+
+            const res = await fetch("/Chatbot/AnalyzeReport", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(payload)
+            });
+
+            const result = await res.json();
+            if (!res.ok || !result.success) {
+                document.getElementById("insightBox").innerText = result.error || "Analysis failed.";
+                return;
+            }
+
+            document.getElementById("insightBox").innerText = result.insight;
+        }
+
+        async function sendMessage() {
+            const message = document.getElementById("chatMessage").value;
+            const res = await fetch("/Chatbot/Chat", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ message })
+            });
+
+            const result = await res.json();
+            if (!res.ok || !result.success) {
+                document.getElementById("chatAnswer").innerText = result.error || "Chat request failed.";
+                return;
+            }
+
+            document.getElementById("chatAnswer").innerText = result.answer;
+        }
+    </script>
+}

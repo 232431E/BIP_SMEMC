@@ -1,0 +1,66 @@
+﻿@model BIP_SMEMC.Models.ProfileViewModel
+@{
+    ViewData["Title"] = "Profile";
+}
+
+<div class="container py-4">
+    <h1 class="h3 mb-3">My Profile</h1>
+
+    @if (TempData["SuccessMessage"] != null)
+    {
+        <div class="alert alert-success">@TempData["SuccessMessage"]</div>
+    }
+
+    <div asp-validation-summary="ModelOnly" class="text-danger small mb-2"></div>
+
+    <div class="card border-0 shadow-sm">
+        <div class="card-body">
+            <form asp-action="Profile" method="post">
+                <div class="row g-3">
+                    <div class="col-md-6">
+                        <label class="form-label">Email</label>
+                        <input class="form-control" value="@Model.Email" readonly />
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label">Role</label>
+                        <input class="form-control" value="@Model.Role" readonly />
+                    </div>
+                    <div class="col-md-6">
+                        <label asp-for="Industry" class="form-label">Industry</label>
+                        <select asp-for="Industry" class="form-select">
+                            @if (ViewBag.Industries != null)
+                            {
+                                foreach (var industry in (List<string>)ViewBag.Industries)
+                                {
+                                    <option value="@industry">@industry</option>
+                                }
+                            }
+                        </select>
+                        <span asp-validation-for="Industry" class="text-danger small"></span>
+                    </div>
+                </div>
+
+                <hr class="my-4" />
+                <h2 class="h6 mb-3">Change Password</h2>
+                <p class="text-muted small">Leave both password fields blank if you only want to update industry.</p>
+                <div class="row g-3">
+                    <div class="col-md-6">
+                        <label asp-for="NewPassword" class="form-label">New Password</label>
+                        <input asp-for="NewPassword" type="password" class="form-control" autocomplete="new-password" />
+                        <span asp-validation-for="NewPassword" class="text-danger small"></span>
+                    </div>
+                    <div class="col-md-6">
+                        <label asp-for="ConfirmPassword" class="form-label">Confirm Password</label>
+                        <input asp-for="ConfirmPassword" type="password" class="form-control" autocomplete="new-password" />
+                        <span asp-validation-for="ConfirmPassword" class="text-danger small"></span>
+                    </div>
+                </div>
+
+                <div class="d-flex gap-2 mt-4">
+                    <button type="submit" class="btn btn-primary">Save Changes</button>
+                    <a asp-action="Profile" class="btn btn-outline-secondary">Cancel</a>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>

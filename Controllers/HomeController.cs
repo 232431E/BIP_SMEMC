@@ -15,7 +15,13 @@ namespace BIP_SMEMC.Controllers
 
         public IActionResult Index()
         {
-            return View();
+            var email = HttpContext.Session.GetString("UserEmail");
+            if (string.IsNullOrWhiteSpace(email))
+            {
+                return RedirectToAction("Login", "Account");
+            }
+
+            return RedirectToAction("Index", "Dashboard");
         }
 
         public IActionResult Privacy()

@@ -35,8 +35,14 @@ namespace BIP_SMEMC.Models
     [Postgrest.Attributes.Table("categories_industries")]
     public class IndustryModel : BaseModel
     {
-        [Postgrest.Attributes.PrimaryKey("id", false)] public int Id { get; set; }
-        [Postgrest.Attributes.Column("name")] public string Name { get; set; }
+        [PrimaryKey("id", false)]
+        public int Id { get; set; }
+
+        [Postgrest.Attributes.Column("name")]
+        public string Name { get; set; }
+
+        [Postgrest.Attributes.Column("score_adjustment")]
+        public int ScoreAdjustment { get; set; }
     }
 
     [Postgrest.Attributes.Table("categories_regions")]

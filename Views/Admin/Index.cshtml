@@ -1,0 +1,229 @@
+﻿@model BIP_SMEMC.Models.AdminUsersViewModel
+@{
+    ViewData["Title"] = "Admin Panel";
+}
+
+<div class="container-fluid py-4">
+    <h1 class="h3 mb-3">Admin Panel</h1>
+
+    <div class="card border-0 shadow-sm mb-3">
+        <div class="card-body">
+            <div class="row g-2">
+                <div class="col-md-4">
+                    <input id="searchInput" class="form-control" placeholder="Search email / role / industry" />
+                </div>
+                <div class="col-md-3">
+                    <select id="roleFilter" class="form-select">
+                        <option value="">All Roles</option>
+                        <option>Admin</option>
+                        <option>User</option>
+                    </select>
+                </div>
+                <div class="col-md-3">
+                    <select id="industryFilter" class="form-select">
+                        <option value="">All Industries</option>
+                        @if (ViewBag.Industries != null)
+                        {
+                            foreach (var industry in (List<string>)ViewBag.Industries)
+                            {
+                                <option value="@industry">@industry</option>
+                            }
+                        }
+                    </select>
+                </div>
+                <div class="col-md-2">
+                    <button type="button" class="btn btn-outline-secondary w-100" onclick="clearFilters()">Clear</button>
+                </div>
+            </div>
+            <div class="row g-2 mt-1">
+                <div class="col-md-4">
+                    <select id="sortBy" class="form-select">
+                        <option value="0">Sort by Email</option>
+                        <option value="1">Sort by Role</option>
+                        <option value="2">Sort by Industry</option>
+                        <option value="3">Sort by Full Name</option>
+                    </select>
+                </div>
+                <div class="col-md-3">
+                    <select id="sortDir" class="form-select">
+                        <option value="asc">Ascending</option>
+                        <option value="desc">Descending</option>
+                    </select>
+                </div>
+                <div class="col-md-2">
+                    <button type="button" class="btn btn-outline-primary w-100" onclick="runSort()">Sort</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="card border-0 shadow-sm">
+        <div class="card-body">
+            <div class="table-responsive">
+                <table class="table table-sm table-hover align-middle" id="usersTable">
+                    <thead>
+                        <tr>
+                            <th onclick="sortTable(0)" style="cursor:pointer;">Email</th>
+                            <th onclick="sortTable(1)" style="cursor:pointer;">Role</th>
+                            <th onclick="sortTable(2)" style="cursor:pointer;">Industry</th>
+                            <th>Full Name</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var user in Model.Users)
+                        {
+                            var normalizedRole = (string.Equals(user.Email, "admin@nyp.sg", StringComparison.OrdinalIgnoreCase) || string.Equals(user.Role, "Admin", StringComparison.OrdinalIgnoreCase)) ? "Admin" : "User";
+                            var industry = user.Industries?.FirstOrDefault() ?? "";
+                            var rowKey = user.Email.Replace("@", "_").Replace(".", "_").Replace("-", "_");
+                            <tr data-role="@normalizedRole" data-industry="@industry" data-orig-email="@user.Email">
+                                <td><input id="email_@rowKey" class="form-control form-control-sm" value="@user.Email" /></td>
+                                <td>
+                                    @if (string.Equals(user.Email, "admin@nyp.sg", StringComparison.OrdinalIgnoreCase))
+                                    {
+                                        <input class="form-control form-control-sm" value="Admin" readonly />
+                                    }
+                                    else
+                                    {
+                                        <select id="role_@rowKey" class="form-select form-select-sm">
+                                            <option value="User" selected="@(normalizedRole == "User")">User</option>
+                                            <option value="Admin" selected="@(normalizedRole == "Admin")">Admin</option>
+                                        </select>
+                                    }
+                                </td>
+                                <td>
+                                    <select id="ind_@rowKey" class="form-select form-select-sm">
+                                        @if (ViewBag.Industries != null)
+                                        {
+                                            foreach (var i in (List<string>)ViewBag.Industries)
+                                            {
+                                                <option value="@i" selected="@(industry == i)">@i</option>
+                                            }
+                                        }
+                                        else
+                                        {
+                                            <option value="@industry">@industry</option>
+                                        }
+                                    </select>
+                                </td>
+                                <td><input id="name_@rowKey" class="form-control form-control-sm" value="@user.FullName" /></td>
+                                <td class="d-flex gap-2">
+                                    <button class="btn btn-sm btn-outline-primary" type="button" onclick="saveUser('@rowKey','@user.Email')">Save</button>
+                                    <button class="btn btn-sm btn-outline-danger" type="button" onclick="deleteUser('@user.Email')">Delete</button>
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+@section Scripts {
+    <script>
+        const searchInput = document.getElementById('searchInput');
+        const roleFilter = document.getElementById('roleFilter');
+        const industryFilter = document.getElementById('industryFilter');
+        const sortBy = document.getElementById('sortBy');
+        const sortDir = document.getElementById('sortDir');
+        const table = document.getElementById('usersTable');
+
+        function getCellValue(row, colIdx) {
+            const cell = row.cells[colIdx];
+            if (!cell) return '';
+            const input = cell.querySelector('input');
+            if (input) return (input.value || '').trim();
+            const select = cell.querySelector('select');
+            if (select) return (select.value || '').trim();
+            return (cell.innerText || '').trim();
+        }
+
+        function getRowValues(row) {
+            return {
+                email: getCellValue(row, 0).toLowerCase(),
+                role: getCellValue(row, 1).toLowerCase(),
+                industry: getCellValue(row, 2).toLowerCase(),
+                fullName: getCellValue(row, 3).toLowerCase()
+            };
+        }
+
+        function applyFilters() {
+            const q = searchInput.value.toLowerCase().trim();
+            const role = roleFilter.value.toLowerCase().trim();
+            const industry = industryFilter.value.toLowerCase().trim();
+            const rows = document.querySelectorAll('#usersTable tbody tr');
+
+            rows.forEach(r => {
+                const v = getRowValues(r);
+                const searchable = `${v.email} ${v.role} ${v.industry} ${v.fullName}`;
+                const matchQ = !q || searchable.includes(q);
+                const matchRole = !role || v.role === role;
+                const matchIndustry = !industry || v.industry === industry;
+                r.style.display = matchQ && matchRole && matchIndustry ? '' : 'none';
+            });
+        }
+
+        searchInput.addEventListener('input', applyFilters);
+        roleFilter.addEventListener('change', applyFilters);
+        industryFilter.addEventListener('change', applyFilters);
+
+        function clearFilters() {
+            searchInput.value = '';
+            roleFilter.value = '';
+            industryFilter.value = '';
+            applyFilters();
+        }
+
+        function sortTable(colIdx, forcedDir = null) {
+            const tbody = table.tBodies[0];
+            const rows = Array.from(tbody.rows);
+            const asc = forcedDir
+                ? forcedDir === 'asc'
+                : table.getAttribute('data-sort-col') != colIdx || table.getAttribute('data-sort-dir') !== 'asc';
+
+            rows.sort((a,b) => {
+                const aText = getCellValue(a, colIdx).toLowerCase();
+                const bText = getCellValue(b, colIdx).toLowerCase();
+                return asc ? aText.localeCompare(bText) : bText.localeCompare(aText);
+            });
+
+            rows.forEach(r => tbody.appendChild(r));
+            table.setAttribute('data-sort-col', colIdx);
+            table.setAttribute('data-sort-dir', asc ? 'asc' : 'desc');
+            applyFilters();
+        }
+
+        function runSort() {
+            sortTable(parseInt(sortBy.value, 10), sortDir.value);
+        }
+
+        async function saveUser(key, originalEmail) {
+            const payload = new URLSearchParams({
+                originalEmail: originalEmail,
+                email: document.getElementById('email_' + key).value,
+                role: document.getElementById('role_' + key)?.value ?? 'Admin',
+                industry: document.getElementById('ind_' + key).value,
+                fullName: document.getElementById('name_' + key).value
+            });
+
+            await fetch('/Admin/UpdateUser', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                body: payload
+            });
+            location.reload();
+        }
+
+        async function deleteUser(email) {
+            if (!confirm('Delete this user?')) return;
+            const payload = new URLSearchParams({ email });
+            await fetch('/Admin/DeleteUser', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                body: payload
+            });
+            location.reload();
+        }
+    </script>
+}

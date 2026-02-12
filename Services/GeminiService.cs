@@ -13,6 +13,7 @@ namespace BIP_SMEMC.Services
     {
         private readonly HttpClient _http;
         private readonly string _apiKey;
+        private readonly string _model;
         private readonly Supabase.Client _db;
         // Correct Endpoint for 1.5 Flash (v1beta)
         private const string BaseUrl = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent";
@@ -20,6 +21,7 @@ namespace BIP_SMEMC.Services
         {
             _http = http;
             _apiKey = config["Gemini:ApiKey"];
+            _model = "gemini-2.5-flash";
             _db = db;
         }
 
@@ -213,6 +215,127 @@ Keep it under 50 words.";
                 Debug.WriteLine($"[AI TRENDS EXCEPTION] {ex.Message}");
                 return "AI Analysis error.";
             }
+        }
+
+        public async Task<string> GenerateFinanceInsightAsync(string prompt)
+        {
+            if (string.IsNullOrWhiteSpace(_apiKey))
+            {
+                return "Gemini API key is missing. Set Gemini:ApiKey in user secrets or environment variables.";
+            }
+
+            var json = await SendPromptAsync(BuildGenerateUrl(_model), prompt, 0.25, 900);
+            try
+            {
+                var obj = JObject.Parse(json);
+                return obj["candidates"]?[0]?["content"]?["parts"]?[0]?["text"]?.ToString()
+                       ?? "No insight generated.";
+            }
+            catch
+            {
+                return "Unable to parse Gemini response.";
+            }
+        }
+        public async Task<(bool Success, string Content, bool QuotaExceeded)> GenerateFinanceChatJsonAsync(string systemInstruction, string contextJson, string userMessage)
+        {
+            if (string.IsNullOrWhiteSpace(_apiKey))
+            {
+                return (false, "Gemini API key is missing.", false);
+            }
+
+            var prompt = new StringBuilder()
+                .AppendLine(systemInstruction)
+                .AppendLine()
+                .AppendLine("Financial context JSON:")
+                .AppendLine(contextJson)
+                .AppendLine()
+                .AppendLine("User question:")
+                .AppendLine(userMessage)
+                .AppendLine()
+                .AppendLine("Return valid JSON only with schema:")
+                .AppendLine("{\"answer\":\"...\",\"actionItems\":[\"...\"],\"whichNumbersIUsed\":{\"revenue\":0,\"expenses\":0,\"netProfit\":0,\"profitMargin\":0,\"topExpenseCategories\":[\"...\"]}}")
+                .ToString();
+
+            var url = BuildGenerateUrl(_model);
+
+            var delays = new[] { 400, 1200, 2400 };
+            for (var attempt = 0; attempt < delays.Length; attempt++)
+            {
+                using var response = await PostGenerateContentAsync(url, prompt, 0.3, 700);
+                var responseText = await response.Content.ReadAsStringAsync();
+
+                if (response.IsSuccessStatusCode)
+                {
+                    var text = ExtractGeminiText(responseText);
+                    if (!string.IsNullOrWhiteSpace(text))
+                    {
+                        return (true, text, false);
+                    }
+
+                    return (false, "Gemini returned an empty response.", false);
+                }
+
+                if ((int)response.StatusCode == 429)
+                {
+                    if (attempt < delays.Length - 1)
+                    {
+                        await Task.Delay(delays[attempt]);
+                        continue;
+                    }
+
+                    return (false, "API quota exceeded", true);
+                }
+
+                return (false, $"Gemini request failed ({(int)response.StatusCode}).", false);
+            }
+
+            return (false, "Gemini request failed.", false);
+        }
+
+        private async Task<string> SendPromptAsync(string url, string prompt, double temperature = 0.4, int maxOutputTokens = 900)
+        {
+            using var response = await PostGenerateContentAsync(url, prompt, temperature, maxOutputTokens);
+            return await response.Content.ReadAsStringAsync();
+        }
+
+        private async Task<HttpResponseMessage> PostGenerateContentAsync(string url, string prompt, double temperature, int maxOutputTokens)
+        {
+            var request = new
+            {
+                contents = new[]
+                {
+                    new
+                    {
+                        parts = new[] { new { text = prompt } }
+                    }
+                },
+                generationConfig = new
+                {
+                    temperature,
+                    maxOutputTokens
+                }
+            };
+
+            var payload = JsonConvert.SerializeObject(request);
+            return await _http.PostAsync(url, new StringContent(payload, Encoding.UTF8, "application/json"));
+        }
+
+        private static string ExtractGeminiText(string json)
+        {
+            try
+            {
+                var obj = JObject.Parse(json);
+                return obj["candidates"]?[0]?["content"]?["parts"]?[0]?["text"]?.ToString() ?? string.Empty;
+            }
+            catch
+            {
+                return string.Empty;
+            }
+        }
+
+        private string BuildGenerateUrl(string model)
+        {
+            return $"https://generativelanguage.googleapis.com/v1/models/{model}:generateContent?key={_apiKey}";
         }
     }
 }
