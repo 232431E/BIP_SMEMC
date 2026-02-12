@@ -24,7 +24,8 @@ namespace BIP_SMEMC.Controllers
         }
         public async Task<IActionResult> Index()
         {
-            var userEmail = User.Identity?.Name ?? "dummy@sme.com";
+            var userEmail = HttpContext.Session.GetString("UserEmail");
+            if (string.IsNullOrEmpty(userEmail)) return RedirectToAction("Login", "Account");
             // 1. DYNAMIC ANCHOR: Find when the user last had activity
             var latestDate = await _financeService.GetLatestTransactionDate(userEmail);
             // 2. RANGE: Pull the full year containing that latest date
@@ -95,7 +96,8 @@ namespace BIP_SMEMC.Controllers
             string[] balSynonyms = { "balance", "bal", "running" };
 
             // ENSURE USER EXISTS IN SUPABASE
-            var userEmail = User.Identity?.Name ?? "dummy@sme.com";
+            var userEmail = HttpContext.Session.GetString("UserEmail");
+            if (string.IsNullOrEmpty(userEmail)) return RedirectToAction("Login", "Account"); 
             var userCheck = await _supabase.From<UserModel>().Where(u => u.Email == userEmail).Get();
             if (!userCheck.Models.Any())
             {

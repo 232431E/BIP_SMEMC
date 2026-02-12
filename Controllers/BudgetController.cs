@@ -18,7 +18,8 @@ namespace BIP_SMEMC.Controllers
 
         public async Task<IActionResult> Index()
         {
-            var userEmail = User.Identity?.Name ?? "dummy@sme.com";
+            var userEmail = HttpContext.Session.GetString("UserEmail");
+            if (string.IsNullOrEmpty(userEmail)) return RedirectToAction("Login", "Account");
 
             // 1. Get Data Range
             var latestDate = await _financeService.GetLatestTransactionDate(userEmail);
@@ -59,8 +60,8 @@ namespace BIP_SMEMC.Controllers
         [HttpPost]
         public async Task<IActionResult> UpdateBudget(int categoryId, decimal amount, int month, int year)
         {
-            var userEmail = User.Identity?.Name ?? "dummy@sme.com";
-
+            var userEmail = HttpContext.Session.GetString("UserEmail");
+            if (string.IsNullOrEmpty(userEmail)) return RedirectToAction("Login", "Account");
             try
             {
                 // Check if a specific budget override already exists for this Month/Year

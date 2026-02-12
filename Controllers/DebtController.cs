@@ -16,8 +16,11 @@ namespace BIP_SMEMC.Controllers
 
         public async Task<IActionResult> Index()
         {
-            var userEmail = User.Identity?.Name ?? "dummy@sme.com";
-
+            var userEmail = HttpContext.Session.GetString("UserEmail");
+            if (string.IsNullOrWhiteSpace(userEmail))
+            {
+                return RedirectToAction("Login", "Account");
+            }
             // 1. Check for new debts from ledger
             await _debtService.SyncDebtsFromTransactions(userEmail);
 
@@ -47,8 +50,11 @@ namespace BIP_SMEMC.Controllers
         [ValidateAntiForgeryToken]
         public async Task<IActionResult> Create(DebtModel debt)
         {
-            var userEmail = User.Identity?.Name ?? "dummy@sme.com";
-
+            var userEmail = HttpContext.Session.GetString("UserEmail");
+            if (string.IsNullOrWhiteSpace(userEmail))
+            {
+                return RedirectToAction("Login", "Account");
+            }
             // Validation Cleanup
             ModelState.Remove("Id");
             ModelState.Remove("Description");
@@ -87,7 +93,7 @@ namespace BIP_SMEMC.Controllers
         [ValidateAntiForgeryToken]
         public async Task<IActionResult> Edit(DebtModel debt)
         {
-            var userEmail = User.Identity?.Name ?? "dummy@sme.com";
+            var userEmail = HttpContext.Session.GetString("UserEmail");
             ModelState.Remove("Description");
             ModelState.Remove("UserId");
             if (!ModelState.IsValid) return View(debt);

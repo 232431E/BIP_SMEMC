@@ -21,8 +21,26 @@ namespace BIP_SMEMC.Controllers
 
         public async Task<IActionResult> Index()
         {
-            var userEmail = User.Identity?.Name ?? "dummy@sme.com";
-            var model = new DashboardViewModel { UserName = userEmail.Split('@')[0] };
+            // 1. Strict Session Check
+            var userEmail = HttpContext.Session.GetString("UserEmail");
+            if (string.IsNullOrWhiteSpace(userEmail))
+            {
+                return RedirectToAction("Login", "Account");
+            }
+
+            // 2. Fetch User Display Name
+            var displayName = "User";
+            var user = (await _supabase.From<UserModel>().Where(x => x.Email == userEmail).Get()).Models.FirstOrDefault();
+            if (user != null && !string.IsNullOrWhiteSpace(user.FullName))
+            {
+                displayName = user.FullName;
+            }
+            else
+            {
+                displayName = userEmail.Split('@')[0];
+            }
+            
+            var model = new DashboardViewModel { UserName = displayName };
 
             // 1. FETCH DATA (Parallel for speed)
             var latestDate = await _financeService.GetLatestTransactionDate(userEmail);

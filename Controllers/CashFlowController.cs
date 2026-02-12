@@ -21,7 +21,8 @@ namespace BIP_SMEMC.Controllers
         {
             Debug.WriteLine("=== [START] CashFlow Page Load ===");
             var model = new CashFlowViewModel();
-            var userEmail = User.Identity?.Name ?? "dummy@sme.com";
+            var userEmail = HttpContext.Session.GetString("UserEmail");
+            if (string.IsNullOrEmpty(userEmail)) return RedirectToAction("Login", "Account"); 
             try
             {
                 // 1.1 GET ANCHOR DATE (Fixes 0 records issue)
@@ -201,7 +202,8 @@ namespace BIP_SMEMC.Controllers
         [HttpPost]
         public async Task<IActionResult> UpdatePreferences(List<string> industries, List<string> regions)
         {
-            var userEmail = User.Identity?.Name ?? "dummy@sme.com";
+            var userEmail = HttpContext.Session.GetString("UserEmail");
+            if (string.IsNullOrEmpty(userEmail)) return Unauthorized();
 
             // ENHANCED DEBUGGING
             Debug.WriteLine("--- [CRUD START] UpdatePreferences ---");
