@@ -13,6 +13,7 @@ namespace BIP_SMEMC
             // --- CORE SERVICES ---
             builder.Services.AddControllersWithViews().AddNewtonsoftJson();
             builder.Services.AddHttpContextAccessor();
+            builder.Services.AddMemoryCache();
 
             // FIX A: Add the global HttpClient factory (Required for NewsBGService)
             builder.Services.AddHttpClient();

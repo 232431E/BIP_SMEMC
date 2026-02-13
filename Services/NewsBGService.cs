@@ -18,105 +18,185 @@ namespace BIP_SMEMC.Services
             _config = config;
         }
         // Controllers need this public method to manually trigger a refresh
-        public async Task TriggerNewsCycle()
-        {
-            using (var scope = _scopeFactory.CreateScope())
-            {
-                var db = scope.ServiceProvider.GetRequiredService<Supabase.Client>();
-                var ai = scope.ServiceProvider.GetRequiredService<GeminiService>();
-                await RunDailyNewsCycle(db, ai);
-            }
-        }
-
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
         {
-            await Task.Delay(5000, stoppingToken);
+            // 1. Initial short delay to let Supabase/Gemini services initialize
+            await Task.Delay(2000, stoppingToken);
+
             while (!stoppingToken.IsCancellationRequested)
             {
-                await Task.Delay(TimeSpan.FromHours(6), stoppingToken);
-                await TriggerNewsCycle();
+                var now = DateTime.Now;
+                DateTime nextRun;
+
+                // 2. Decide the next window (12 AM or 12 PM)
+                if (now.Hour < 12)
+                {
+                    nextRun = now.Date.AddHours(12); // Target: Today at Noon
+                }
+                else
+                {
+                    nextRun = now.Date.AddDays(1);   // Target: Tomorrow at Midnight
+                }
+
+                var delay = nextRun - now;
+
+                // 3. SCHEDULE LOGGING
+                Debug.WriteLine($"[SCHEDULE] Current Time: {now:HH:mm:ss}");
+                Debug.WriteLine($"[SCHEDULE] Next 12h window: {nextRun:yyyy-MM-dd HH:mm:ss}");
+                Debug.WriteLine($"[SCHEDULE] Sleeping for {delay.TotalMinutes:F1} minutes...");
+
+                // 4. WAIT UNTIL THE WINDOW
+                await Task.Delay(delay, stoppingToken);
+
+                // 5. TRIGGER ONLY AFTER DELAY
+                if (!stoppingToken.IsCancellationRequested)
+                {
+                    await TriggerNewsCycle();
+                }
             }
+        }
+        public async Task TriggerNewsCycle()
+        {
+            using var scope = _scopeFactory.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<Supabase.Client>();
+            var ai = scope.ServiceProvider.GetRequiredService<GeminiService>();
+
+            Debug.WriteLine($"--- [NEWS CYCLE START] {DateTime.Now:yyyy-MM-dd HH:mm:ss} ---");
+
+            // 1. Cleanup old AI responses (Fixes Criterion Type Error)
+            await CleanupOldAIResponses(db);
+
+            // 2. Run Cycle (Fetch -> Insert -> AI Generation)
+            await RunDailyNewsCycle(db, ai);
+
+            // 3. Debug
+            await DebugRetrieveLatestOutlook(db);
+        }
+
+        private async Task CleanupOldAIResponses(Supabase.Client db)
+        {
+            try
+            {
+                // Fix: Use ISO String format for Supabase dates
+                var cutoff = DateTime.UtcNow.AddDays(-3).ToString("yyyy-MM-ddTHH:mm:ssZ");
+                Debug.WriteLine($"[CLEANUP] Removing outlooks older than {cutoff}");
+
+                await db.From<AIResponseModel>()
+                    .Filter("feature_type", Postgrest.Constants.Operator.Equals, "NEWS_OUTLOOK")
+                    .Filter("created_at", Postgrest.Constants.Operator.LessThan, cutoff)
+                    .Delete();
+            }
+            catch (Exception ex) { Debug.WriteLine($"[CLEANUP ERROR] {ex.Message}"); }
+        }
+
+        private async Task DebugRetrieveLatestOutlook(Supabase.Client db)
+        {
+            try
+            {
+                // Fix: Simplified query logic to prevent PGRST100
+                var res = await db.From<AIResponseModel>()
+                    .Filter("feature_type", Postgrest.Constants.Operator.Equals, "NEWS_OUTLOOK")
+                    .Order("created_at", Postgrest.Constants.Ordering.Descending)
+                    .Limit(1)
+                    .Get();
+
+                var latest = res.Models.FirstOrDefault();
+                if (latest != null)
+                {
+                    Debug.WriteLine("--- [RETRIEVAL CHECK] ---");
+                    Debug.WriteLine($"Model: {latest.VersionTag}");
+                    Debug.WriteLine($"Content Length: {latest.ResponseText.Length}");
+                    // Preview first 200 chars
+                    Debug.WriteLine($"Preview: {latest.ResponseText.Substring(0, Math.Min(200, latest.ResponseText.Length))}");
+                
+                }
+            }
+            catch (Exception ex) { Debug.WriteLine($"[DEBUG RETRIEVAL ERROR] {ex.Message}"); }
         }
 
         public async Task RunDailyNewsCycle(Supabase.Client db, GeminiService ai)
         {
             try
             {
-                Debug.WriteLine("--- [CHECKING] News Status for Today ---");
+                // 1. FETCH & TAG NEWS
+                Debug.WriteLine("[PROCESS 1/2] Fetching fresh news articles...");
+                var rawArticles = await FetchMultiSourceNews();
 
-                // 1. Define "Today" range (UTC)
-                var todayStart = DateTime.UtcNow.Date.ToString("yyyy-MM-dd");
-
-                // 2. CHECK: Do we already have outlooks generated for today?
-                // If we have outlooks, we likely don't need to run the full cycle again.
-                var todayOutlooks = await db.From<NewsOutlookModel>()
-                    .Filter("date", Postgrest.Constants.Operator.Equals, todayStart)
-                    .Get();
-
-                if (todayOutlooks.Models.Any())
+                if (rawArticles.Any())
                 {
-                    Debug.WriteLine("[SKIP] Industry outlooks already exist for today. News cycle aborted.");
+                    var industries = (await db.From<IndustryModel>().Get()).Models;
+                    var regions = (await db.From<RegionModel>().Get()).Models;
+                    var tagged = LocalKeywordTagging(rawArticles, industries, regions);
+
+                    int newCount = 0;
+                    foreach (var art in tagged)
+                    {
+                        var check = await db.From<NewsArticleModel>().Filter("url", Postgrest.Constants.Operator.Equals, art.Url).Get();
+                        if (!check.Models.Any())
+                        {
+                            await db.From<NewsArticleModel>().Insert(art);
+                            newCount++;
+                        }
+                    }
+                    Debug.WriteLine($"[PROCESS] Inserted {newCount} new articles.");
+                }
+
+                // 2. AI OUTLOOK GENERATION
+                Debug.WriteLine("[PROCESS 2/2] Retrieving news context for AI...");
+                var context = (await db.From<NewsArticleModel>()
+                    .Order("date", Postgrest.Constants.Ordering.Descending)
+                    .Limit(40).Get()).Models;
+
+                if (!context.Any())
+                {
+                    Debug.WriteLine("[SKIP] No news articles available in DB to process.");
                     return;
                 }
 
-                // 3. CHECK: Do we have enough fresh news articles?
-                var todayArticles = await db.From<NewsArticleModel>()
-                    .Filter("date", Postgrest.Constants.Operator.Equals, todayStart)
-                    .Get();
+                var industriesList = (await db.From<IndustryModel>().Get()).Models.Select(i => i.Name).ToList();
+                var regionsList = (await db.From<RegionModel>().Get()).Models.Select(r => r.Name).ToList();
 
-                // If you have at least some articles but NO outlooks, you might want to 
-                // skip the FETCH step and just run the AI generation.
-                bool needFetch = todayArticles.Models.Count < 10; // Threshold: e.g., 10 articles
+                var outlooks = await ai.GenerateIndustryOutlooks(context, industriesList, regionsList);
 
-                if (!needFetch)
+                if (outlooks != null && outlooks.Any())
                 {
-                    Debug.WriteLine("[INFO] Fresh articles found, skipping fetch and proceeding to AI generation.");
+                    // Clear today's previous run to prevent duplicate UI items
+                    var today = DateTime.UtcNow.ToString("yyyy-MM-dd");
+                    await db.From<NewsOutlookModel>().Filter("date", Postgrest.Constants.Operator.Equals, today).Delete();
+
+                    await db.From<NewsOutlookModel>().Insert(outlooks);
+                    Debug.WriteLine($"[SUCCESS] AI Outlook generated and saved. Count: {outlooks.Count}");
                 }
                 else
                 {
-                    // --- EXISTING FETCH & TAGGING LOGIC ---
-                    Debug.WriteLine("[PROCESS] Fetching new articles...");
-                    var rawArticles = await FetchMultiSourceNews();
-                    if (!rawArticles.Any()) return;
-
-                    var industries = (await db.From<IndustryModel>().Get()).Models;
-                    var regions = (await db.From<RegionModel>().Get()).Models;
-                    var taggedArticles = LocalKeywordTagging(rawArticles, industries, regions);
-
-                    foreach (var art in taggedArticles)
-                    {
-                        var exists = await db.From<NewsArticleModel>()
-                            .Filter("url", Postgrest.Constants.Operator.Equals, art.Url)
-                            .Get();
-                        if (exists.Models.Count == 0) await db.From<NewsArticleModel>().Insert(art);
-                    }
+                    Debug.WriteLine("[WARNING] AI returned 0 outlooks or failed all models.");
+                    // Attempt to retrieve the last "Garbled" response for debug viewing
+                    await DebugRetrieveGarbledResponse(db);
                 }
-
-                // 4. GENERATE OUTLOOKS (Only if we reached this point)
-                var industriesList = (await db.From<IndustryModel>().Get()).Models;
-                var regionsList = (await db.From<RegionModel>().Get()).Models;
-
-                var context = (await db.From<NewsArticleModel>()
-                    .Order("date", Postgrest.Constants.Ordering.Descending)
-                    .Limit(50).Get()).Models;
-
-                Debug.WriteLine("[AI] Generating new industry outlooks...");
-                var newOutlooks = await ai.GenerateIndustryOutlooks(
-                    context,
-                    industriesList.Select(i => i.Name).ToList(),
-                    regionsList.Select(r => r.Name).ToList()
-                );
-
-                if (newOutlooks.Any()) await db.From<NewsOutlookModel>().Insert(newOutlooks);
-
-                Debug.WriteLine("--- [FINISHED] News Cycle ---");
             }
-            catch (Exception ex)
-            {
-                Debug.WriteLine($"[NEWS BG ERROR] {ex.Message}");
-            }
+            catch (Exception ex) { Debug.WriteLine($"[NEWS CYCLE ERROR] {ex.Message}"); }
         }
         
+        private async Task DebugRetrieveGarbledResponse(Supabase.Client db)
+        {
+            try
+            {
+                var res = await db.From<AIResponseModel>()
+                    .Filter("feature_type", Postgrest.Constants.Operator.Equals, "NEWS_OUTLOOK")
+                    .Order("created_at", Postgrest.Constants.Ordering.Descending)
+                    .Limit(1)
+                    .Get();
+
+                var log = res.Models.FirstOrDefault();
+                if (log != null)
+                {
+                    Debug.WriteLine("--- [GARBLED DATA RETRIEVAL] ---");
+                    Debug.WriteLine($"Model: {log.VersionTag}");
+                    Debug.WriteLine($"Full Raw Text: {log.ResponseText}");
+                }
+            }
+            catch (Exception ex) { Debug.WriteLine($"[DEBUG RETRIEVAL ERROR] {ex.Message}"); }
+        }
         private async Task<List<NewsArticleModel>> FetchMultiSourceNews()
         {
             var articles = new List<NewsArticleModel>();

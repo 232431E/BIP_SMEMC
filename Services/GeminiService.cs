@@ -1,6 +1,7 @@
 ﻿using BIP_SMEMC.Models;
 using Google.GenAI;
 using Google.GenAI.Types;
+using Microsoft.Extensions.Caching.Memory;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using System.Diagnostics;
@@ -13,104 +14,199 @@ namespace BIP_SMEMC.Services
     {
         private readonly Client _client;
         private readonly Supabase.Client _db;
+        private readonly IMemoryCache _cache; // Faster than DB
+
         // Define Model Priority List
-        private readonly string[] _models = new[] {"gemini-not"};
-            //new[] { 
-            //"gemini-2.5-flash", 
-            //"gemini-3-flash-preview", 
-            //"gemini-2.5-flash-lite",
-            //"gemini-2.0-flash" }; 
-        public GeminiService(IConfiguration config, Supabase.Client db)
+        // ==========================================
+        // 1. DEFINE MODEL CONSTANTS FOR RATE LIMIT SPREADING
+        // ==========================================
+
+        // Define specific model constants based on your API list
+        private const string MODEL_CHAT_WORKHORSE = "gemini-2.0-flash-lite"; // 14.4k limit
+        private const string MODEL_FAST = "gemini-3-flash-preview";         // 1.5k limit
+        private const string MODEL_SMART = "gemini-2.5-pro";          // 1.5k limit
+        private readonly string[] _emergencyModels = new[]
+        {
+            "gemini-2.5-flash-lite"
+        };
+        // Daily Limits (Safety buffer: set slightly lower than actual API limit)
+        private readonly Dictionary<string, int> _modelLimits = new()
+        {
+            { MODEL_CHAT_WORKHORSE, 14000 },
+            { MODEL_FAST, 1450 },
+            { MODEL_SMART, 1450 }
+        };
+
+        public GeminiService(IConfiguration config, Supabase.Client db, IMemoryCache cache)
         {
             var apiKey = config["Gemini:ApiKey"];
-            if (string.IsNullOrEmpty(apiKey)) throw new Exception("Gemini API Key is missing in appsettings.json");
+            if (string.IsNullOrEmpty(apiKey)) throw new Exception("Gemini API Key is missing");
 
-            // Initialize Official Google GenAI Client
             _client = new Client(apiKey: apiKey);
             _db = db;
+            _cache = cache;
         }
 
         // =========================================================================
-        // CORE: SMART EXECUTION ENGINE (HANDLES FALLBACK, SDK, & LOGGING)
+        // 1. QUOTA MANAGEMENT (RAM CACHE)
         // =========================================================================
-        // Services/GeminiService.cs
-
-        private async Task<bool> IsOverQuota(string modelName)
+        private bool IsOverQuota(string modelName)
         {
-            try
-            {
-                var today = DateTime.UtcNow.Date;
-                var countRes = await _db.From<AIResponseModel>()
-                    .Filter("version_tag", Postgrest.Constants.Operator.Equals, modelName)
-                    .Filter("date_key", Postgrest.Constants.Operator.Equals, today)
-                    .Count(Postgrest.Constants.CountType.Exact);
+            // Unique key per day per model
+            string cacheKey = $"GEMINI_USAGE_{modelName}_{DateTime.UtcNow:yyyyMMdd}";
 
-                return countRes >= 18; // Threshold before switching
+            int currentCount = _cache.GetOrCreate(cacheKey, entry =>
+            {
+                entry.AbsoluteExpiration = DateTime.UtcNow.AddDays(1).Date; // Reset at midnight UTC
+                return 0;
+            });
+
+            // If model is in our tracked list, check limit
+            if (_modelLimits.TryGetValue(modelName, out int limit))
+            {
+                bool isOver = currentCount >= limit;
+                if (isOver) Debug.WriteLine($"[QUOTA] {modelName} hit limit ({currentCount}/{limit})");
+                return isOver;
             }
-            catch { return false; }
+
+            // Emergency models usually have low limits (e.g. 1500), assume 1400 safety
+            return currentCount >= 1400;
         }
 
+        private void IncrementUsage(string modelName)
+        {
+            string cacheKey = $"GEMINI_USAGE_{modelName}_{DateTime.UtcNow:yyyyMMdd}";
+
+            if (_cache.TryGetValue(cacheKey, out int currentCount))
+            {
+                _cache.Set(cacheKey, currentCount + 1);
+            }
+            else
+            {
+                _cache.Set(cacheKey, 1);
+            }
+            Debug.WriteLine($"[USAGE] {modelName} count: {currentCount + 1}");
+        }
+
+        // =========================================================================
+        // 2. INTELLIGENT ROUTING
+        // =========================================================================
+        private List<string> GetModelsForFeature(string featureType)
+        {
+            var priority = new List<string>();
+
+            switch (featureType)
+            {
+                case "CHAT_BOT":
+                    // High volume -> Gemma first
+                    priority.Add(MODEL_CHAT_WORKHORSE);
+                    priority.Add(MODEL_FAST);
+                    priority.Add(MODEL_SMART);
+                    priority.Add("gemini-2.5-flash-lite");
+                    priority.Add("gemini-2.0-flash-lite");
+                    break;
+
+                case "NEWS_OUTLOOK":
+                    // Medium reasoning, large context -> Fast Flash first
+                    priority.Add("gemini-2.5-flash-lite");
+                    priority.Add("gemini-3-flash-preview");
+                    break;
+
+                case "FINANCIAL_INSIGHT":
+                    // High reasoning -> Smart Pro first
+                    priority.Add(MODEL_SMART);
+                    priority.Add(MODEL_FAST);
+                    break;
+
+                default:
+                    priority.Add("gemini-2.5-flash-lite");
+                    break;
+            }
+
+            // Always add emergency models at the end
+            priority.AddRange(_emergencyModels);
+            return priority;
+        }
+
+        // =========================================================================
+        // 3. EXECUTION ENGINE
+        // =========================================================================
         private async Task<string> ExecutePromptWithFallbackAsync(
             string prompt,
             string featureType,
-            string userId = "SYSTEM_BG_SERVICE",
-            bool expectJson = false)
+            string userId,
+            bool expectJson)
         {
-            foreach (var modelName in _models)
+            var modelsToTry = GetModelsForFeature(featureType);
+            StringBuilder errorLog = new StringBuilder();
+
+            foreach (var modelName in modelsToTry)
             {
-                // 1. Quota Guard: Check if we have already used this model 18 times today
-                if (await IsOverQuota(modelName))
-                {
-                    Debug.WriteLine($"[QUOTA SKIP] {modelName} is near limit. Trying next...");
-                    continue;
-                }
+                if (IsOverQuota(modelName)) continue;
 
                 try
                 {
-                    Debug.WriteLine($"[GEMINI] Attempting {modelName}...");
+                    Debug.WriteLine($"--- [AI START] Feature: {featureType} | Model: {modelName} ---");
+                    Debug.WriteLine($"[PROMPT PREVIEW] {prompt.Substring(0, Math.Min(100, prompt.Length))}...");
 
                     var config = new GenerateContentConfig
                     {
-                        Temperature = 0.4,
-                        MaxOutputTokens = 1500,
+                        Temperature = 0.2,
+                        MaxOutputTokens = 4000, // Slightly higher for complex JSON
                         ResponseMimeType = expectJson ? "application/json" : "text/plain"
                     };
 
                     var response = await _client.Models.GenerateContentAsync(modelName, prompt, config);
                     var text = response?.Candidates?[0]?.Content?.Parts?[0]?.Text;
 
-                    if (string.IsNullOrWhiteSpace(text)) continue;
+                    if (string.IsNullOrWhiteSpace(text))
+                    {
+                        Debug.WriteLine($"[AI FAIL] {modelName} returned empty text.");
+                        await LogToSupabase(userId, featureType, text, modelName);
+                        continue;
+                    }
 
-                    // 2. Validate JSON if required
+                    // JSON Validation
                     if (expectJson)
                     {
                         try
                         {
-                            var cleaned = CleanJson(text);
-                            Newtonsoft.Json.Linq.JToken.Parse(cleaned);
-                            await LogToSupabase(userId, featureType, text, $"Success via {modelName}");
-                            return cleaned; // SUCCESS: EXIT LOOP IMMEDIATELY
+                            text = CleanJson(text);
+                            if (!text.Trim().EndsWith("]") && !text.Trim().EndsWith("}"))
+                            {
+                                Debug.WriteLine($"[GEMINI] {modelName} output truncated. Retrying next...");
+                                continue;
+                            }
+                            JToken.Parse(text);
                         }
-                        catch {
-                            Debug.WriteLine($"[GEMINI] {modelName} JSON invalid. Retrying...");
-                            continue;
+                        catch (Exception jsonEx)
+                        {
+                            Debug.WriteLine($"[AI JSON ERROR] {modelName}: {jsonEx.Message}");
+                            continue; // Try next model
                         }
                     }
 
-                    // 3. Text Success
-                    await LogToSupabase(userId, featureType, text, $"Success via {modelName}");
-                    return text; // SUCCESS: EXIT LOOP IMMEDIATELY
+                    // Success!
+                    IncrementUsage(modelName);
+
+                    // Log details to DB asynchronously (don't block return)
+                    _ = LogToSupabase(userId, featureType, text, modelName);
+
+                    Debug.WriteLine($"--- [AI SUCCESS] {modelName} | Length: {text.Length} ---");
+                    return text;
                 }
                 catch (Exception ex)
                 {
-                    if (ex.Message.Contains("429")) continue;
-                    Debug.WriteLine($"[GEMINI ERROR] {modelName}: {ex.Message}");
+                    errorLog.AppendLine($"{modelName}: {ex.Message}");
+                    Debug.WriteLine($"[AI EXCEPTION] {modelName}: {ex.Message}");
                 }
             }
+
+            Debug.WriteLine($"[AI CRITICAL FAILURE] All models failed. Errors: {errorLog}");
             return null;
         }
-        
-        private async Task LogToSupabase(string userId, string feature, string rawResponse, string justification)
+
+        private async Task LogToSupabase(string userId, string feature, string response, string modelUsed)
         {
             try
             {
@@ -118,31 +214,34 @@ namespace BIP_SMEMC.Services
                 {
                     UserId = userId,
                     FeatureType = feature,
-                    ResponseText = rawResponse, // Saving the actual AI text response
-                    Justification = justification,
-                    VersionTag = "Google.GenAI SDK",
+                    ResponseText = response,
+                    VersionTag = modelUsed, // CRITICAL: This lets you track which model is failing/garbling
+                    Justification = $"Log for {feature} via {modelUsed}",
                     DateKey = DateTime.UtcNow.Date,
-                    CreatedAt = DateTime.UtcNow
+                    CreatedAt = DateTime.UtcNow // Stored as full timestamp for the 3-day cleanup logic
                 };
 
                 await _db.From<AIResponseModel>().Insert(entry);
-                Debug.WriteLine($"[DB LOG] Saved {feature} response to DB.");
             }
-            catch (Exception ex)
-            {
-                Debug.WriteLine($"[DB LOG FAIL] Could not save AI log: {ex.Message}");
-            }
+            catch (Exception ex) { Debug.WriteLine($"[DB LOG ERROR] {ex.Message}"); }
         }
 
+        private string CleanJson(string text)
+        {
+            return Regex.Replace(text, @"^```json\s*|\s*```$", "", RegexOptions.IgnoreCase | RegexOptions.Multiline).Trim();
+        }
         // =========================================================================
-        // MISSING METHOD RESTORED (Used by ChatbotController)
+        // PUBLIC METHODS (Updated to use new Routing)
         // =========================================================================
+
+        //GenerateFinanceInsightAsync for sean profit improvement use?
         public async Task<string> GenerateFinanceInsightAsync(string prompt)
         {
-            // Wraps the new fallback logic
-            return await ExecutePromptWithFallbackAsync(prompt, "GENERAL_INSIGHT", "USER_ACTION", false)
+            // Uses FINANCIAL_INSIGHT strategy (Pro -> Flash)
+            return await ExecutePromptWithFallbackAsync(prompt, "FINANCIAL_INSIGHT", "USER_ACTION", false)
                    ?? "AI Service is currently unavailable.";
         }
+
 
         // =========================================================================
         // FEATURE 1: INDUSTRY OUTLOOKS (Called by NewsBGService)
@@ -239,28 +338,14 @@ namespace BIP_SMEMC.Services
         // =========================================================================
         public async Task<(bool Success, string Content, bool QuotaExceeded)> GenerateFinanceChatJsonAsync(string system, string context, string userMsg)
         {
-            var prompt = $@"
-            {system}
-            
-            Context Data:
-            {context}
+            var prompt = $@"{system} ... {context} ... {userMsg} ... JSON schema..."; // (Your prompt logic)
 
-            User Question: {userMsg}
-
-            Return strict JSON: {{ ""answer"": ""..."", ""actionItems"": [], ""whichNumbersIUsed"": {{...}} }}
-            ";
-
+            // Uses CHAT_BOT strategy (Gemma -> Flash -> Pro)
             var response = await ExecutePromptWithFallbackAsync(prompt, "CHAT_BOT", "USER_CHAT", true);
 
             if (response == null) return (false, "AI Service Busy.", true);
-
-            return (true, CleanJson(response), false);
+            return (true, response, false);
         }
 
-        // --- HELPER ---
-        private string CleanJson(string text)
-        {
-            return Regex.Replace(text, @"^```json\s*|\s*```$", "", RegexOptions.IgnoreCase | RegexOptions.Multiline).Trim();
-        }
     }
 }

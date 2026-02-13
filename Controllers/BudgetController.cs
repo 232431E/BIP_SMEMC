@@ -142,176 +142,191 @@ namespace BIP_SMEMC.Controllers
         [HttpPost]
         public async Task<IActionResult> AutoReallocate(int month, int year)
         {
-            Debug.WriteLine($"[AUTO-REALLOCATE] Started for {month}/{year}");
+            Debug.WriteLine($"\n--- [AUTO-REALLOCATE START] Target Date: {month}/{year} ---");
             var userEmail = HttpContext.Session.GetString("UserEmail");
             if (string.IsNullOrEmpty(userEmail)) return Json(new { success = false, message = "Session expired" });
 
             try
             {
-                // 1. Fetch Existing Budgets
-                // FIX: Use .Filter with string-formatted date to avoid logic tree error
-                var budgetRes = await _supabase.From<BudgetModel>()
-                    .Filter("user_id", Postgrest.Constants.Operator.Equals, userEmail)
-                    .Filter("month", Postgrest.Constants.Operator.Equals, month)
-                    .Filter("year", Postgrest.Constants.Operator.Equals, year)
-                    .Get();
+                // 1. Fetch All Historical Context
+                var budgetRes = await _supabase.From<BudgetModel>().Filter("user_id", Postgrest.Constants.Operator.Equals, userEmail).Get();
+                var allBudgets = budgetRes.Models;
+                var categories = (await _supabase.From<CategoryModel>().Get()).Models;
+                var expenseRoot = categories.FirstOrDefault(c => c.Name == "Expense");
+                var tier1Cats = categories.Where(c => c.ParentId == expenseRoot?.Id).ToList();
 
-                var budgets = budgetRes.Models;
-                if (!budgets.Any())
-                {
-                    Debug.WriteLine("[AUTO-REALLOCATE] No budgets found.");
-                    return Json(new { success = false, message = "No budgets set for this month yet." });
-                }
-                // 2. Fetch Actuals
+                Debug.WriteLine($"[FETCH] Found {allBudgets.Count} total budget records for user.");
+
+                // 2. Fetch Transactions for the specific month
                 var start = new DateTime(year, month, 1);
                 var end = start.AddMonths(1).AddDays(-1);
                 var transactions = await _financeService.GetUserTransactions(userEmail, start, end);
+                Debug.WriteLine($"[FETCH] Found {transactions.Count} transactions for {month}/{year}.");
 
-                // Fetch Categories for Naming
-                var categories = (await _supabase.From<CategoryModel>().Get()).Models;
-                var expenseRoot = categories.FirstOrDefault(c => c.Name == "Expense");
-
-                // Helper to map transaction to Parent Category ID
-                int GetParentCatId(int? leafId)
+                // Helper: Get carry-forward limit from previous months
+                decimal GetLimit(int catId)
                 {
-                    if (!leafId.HasValue) return 0;
-                    var leaf = categories.FirstOrDefault(c => c.Id == leafId);
-                    while (leaf != null && leaf.ParentId != expenseRoot?.Id && leaf.ParentId != 0)
-                        leaf = categories.FirstOrDefault(c => c.Id == leaf.ParentId);
-                    return leaf?.Id ?? 0;
+                    var match = allBudgets.Where(b => b.CategoryId == catId)
+                        .OrderByDescending(b => b.Year).ThenByDescending(b => b.Month)
+                        .FirstOrDefault(b => b.Year < year || (b.Year == year && b.Month <= month));
+
+                    if (match != null)
+                        Debug.WriteLine($"   - Category {catId}: Borrowing limit ${match.BudgetAmount} from {match.Month}/{match.Year}");
+
+                    return match?.BudgetAmount ?? 0;
                 }
 
-                // 3. Logic: Pool Excess & Find Worst Offender
                 decimal totalPool = 0;
                 BudgetModel worstOffender = null;
                 decimal maxDeficit = 0;
-                var updates = new List<BudgetModel>();
+                var updatesMap = new Dictionary<int, BudgetModel>();
 
-                Debug.WriteLine("[AUTO-REALLOCATE] Analyzing Categories...");
-
-                foreach (var b in budgets) //under budget
+                // 3. Analysis Loop
+                foreach (var cat in tier1Cats)
                 {
-                    // IMPORTANT: Ensure you are calculating the actual spend for the CORRECT CategoryId
-                    decimal actual = transactions.Where(t => GetParentCatId(t.CategoryId) == b.CategoryId).Sum(t => t.Debit);
-                    decimal variance = b.BudgetAmount - actual; 
-                    Debug.WriteLine($" - Cat {b.CategoryId}: Budget {b.BudgetAmount}, Actual {actual}, Var {variance}");
-                    if (variance > 0)
+                    int catId = cat.Id ?? 0;
+                    decimal budgetLimit = GetLimit(catId);
+
+                    // Calculate actual spend for this Parent Category (aggregating all sub-categories)
+                    decimal actual = transactions.Where(t => {
+                        var leaf = categories.FirstOrDefault(c => c.Id == t.CategoryId);
+                        while (leaf != null && leaf.ParentId != expenseRoot?.Id && leaf.ParentId != 0)
+                            leaf = categories.FirstOrDefault(c => c.Id == leaf.ParentId);
+                        return leaf?.Id == catId;
+                    }).Sum(t => t.Debit);
+
+                    decimal variance = budgetLimit - actual;
+                    Debug.WriteLine($"[ANALYSIS] {cat.Name} (ID:{catId}) | Limit: {budgetLimit} | Spent: {actual} | Var: {variance}");
+
+                    if (variance > 50) // Surplus found
                     {
-                        decimal newLimit = Math.Ceiling(actual * 1.05m);
-                        totalPool += (b.BudgetAmount - newLimit);
-                        b.BudgetAmount = newLimit;
-                        updates.Add(b);
+                        decimal newLimit = Math.Ceiling(actual * 1.05m); // Set new limit to actual + 5%
+                        decimal surplus = budgetLimit - newLimit;
+                        totalPool += surplus;
+
+                        Debug.WriteLine($"   >> SURPLUS: ${surplus} added to pool.");
+
+                        var bRecord = allBudgets.FirstOrDefault(b => b.CategoryId == catId && b.Month == month && b.Year == year)
+                                      ?? new BudgetModel { UserId = userEmail, CategoryId = catId, Month = month, Year = year };
+
+                        bRecord.BudgetAmount = newLimit;
+                        updatesMap[catId] = bRecord;
                     }
-                    else if (variance < 0) //overbudget
+                    else if (variance < 0) // Overspent
                     {
                         decimal deficit = Math.Abs(variance);
+                        Debug.WriteLine($"   !! DEFICIT: ${deficit}");
                         if (deficit > maxDeficit)
                         {
                             maxDeficit = deficit;
-                            worstOffender = b;
+                            worstOffender = allBudgets.FirstOrDefault(b => b.CategoryId == catId && b.Month == month && b.Year == year)
+                                            ?? new BudgetModel { UserId = userEmail, CategoryId = catId, Month = month, Year = year, BudgetAmount = budgetLimit };
                         }
                     }
                 }
 
-                Debug.WriteLine($"[AUTO-REALLOCATE] Pool: {totalPool:C}, Worst Deficit: {maxDeficit:C}");
-
+                // 4. Distribution logic
                 if (worstOffender != null && totalPool > 0)
                 {
+                    Debug.WriteLine($"[ACTION] Moving ${totalPool} to {worstOffender.CategoryId}. Previous: {worstOffender.BudgetAmount}");
                     worstOffender.BudgetAmount += totalPool;
-                    if (!updates.Any(u => u.Id == worstOffender.Id)) updates.Add(worstOffender);
+                    updatesMap[worstOffender.CategoryId] = worstOffender;
 
-                    Debug.WriteLine($"[POOL] Moving {totalPool:C} to cover {worstOffender.CategoryId}");
-                    await _supabase.From<BudgetModel>().Upsert(updates);
+                    // 5. SECURE SEQUENTIAL UPDATE (Prevents 21000 Error)
+                    int successCount = 0;
+                    foreach (var item in updatesMap.Values)
+                    {
+                        try
+                        {
+                            if (item.Id > 0)
+                            {
+                                await item.Update<BudgetModel>();
+                            }
+                            else
+                            {
+                                await _supabase.From<BudgetModel>().Insert(item);
+                            }
+                            successCount++;
+                        }
+                        catch (Exception ex)
+                        {
+                            Debug.WriteLine($"[SAVE ERROR] Failed Cat {item.CategoryId}: {ex.Message}");
+                        }
+                    }
 
-                    string worstName = categories.FirstOrDefault(c => c.Id == worstOffender.CategoryId)?.Name ?? "Unknown";
-                    return Json(new { success = true, message = $"Moved {totalPool:C} to cover '{worstName}'." });
+                    Debug.WriteLine($"--- [AUTO-REALLOCATE FINISHED] {successCount} rows updated ---");
+                    return Json(new { success = true, message = $"Moved ${totalPool:N0} to cover overspending." });
                 }
-                return Json(new { success = false, message = "No deficit found or no surplus available to move." });
+
+                return Json(new { success = false, message = "No surplus found to reallocate." });
             }
             catch (Exception ex)
             {
-                Debug.WriteLine($"[AUTO-REALLOCATE FATAL] {ex.Message}");
+                Debug.WriteLine($"[FATAL ERROR] {ex.Message}\n{ex.StackTrace}");
                 return Json(new { success = false, message = "Error: " + ex.Message });
             }
         }
-        // [POST] Smart Increase: Increase ALL overspent budgets to nearest 1000
+
         [HttpPost]
         public async Task<IActionResult> SmartIncreaseAll(int month, int year)
         {
-            Debug.WriteLine($"[SMART INCREASE] Started for {month}/{year}");
+            Debug.WriteLine($"\n--- [SMART INCREASE START] Target: {month}/{year} ---");
             var userEmail = HttpContext.Session.GetString("UserEmail");
             if (string.IsNullOrEmpty(userEmail)) return Json(new { success = false });
 
             try
             {
+                var budgetRes = await _supabase.From<BudgetModel>().Filter("user_id", Postgrest.Constants.Operator.Equals, userEmail).Get();
+                var allBudgets = budgetRes.Models;
+                var categories = (await _supabase.From<CategoryModel>().Get()).Models;
+                var expenseRoot = categories.FirstOrDefault(c => c.Name == "Expense");
+                var tier1Cats = categories.Where(c => c.ParentId == expenseRoot?.Id).ToList();
+
                 var start = new DateTime(year, month, 1);
                 var end = start.AddMonths(1).AddDays(-1);
                 var transactions = await _financeService.GetUserTransactions(userEmail, start, end);
-                var categories = (await _supabase.From<CategoryModel>().Get()).Models;
-                var expenseRoot = categories.FirstOrDefault(c => c.Name == "Expense");
 
-                // Fetch existing budgets
-                // FIX: Use explicit Filters to avoid PGRST100 Logic Tree error
-                var budgetRes = await _supabase.From<BudgetModel>()
-                    .Filter("user_id", Postgrest.Constants.Operator.Equals, userEmail)
-                    .Filter("month", Postgrest.Constants.Operator.Equals, month)
-                    .Filter("year", Postgrest.Constants.Operator.Equals, year)
-                    .Get();
-
-                var budgets = budgetRes.Models;
-
-                var tier1Cats = categories.Where(c => c.ParentId == expenseRoot?.Id).ToList();
-                int count = 0;
-
+                int updatedCount = 0;
                 foreach (var cat in tier1Cats)
                 {
-                    decimal actual = 0;
-                    foreach (var t in transactions)
-                    {
+                    int catId = cat.Id ?? 0;
+                    var match = allBudgets.Where(b => b.CategoryId == catId)
+                        .OrderByDescending(b => b.Year).ThenByDescending(b => b.Month)
+                        .FirstOrDefault(b => b.Year < year || (b.Year == year && b.Month <= month));
+
+                    decimal currentLimit = match?.BudgetAmount ?? 0;
+
+                    decimal actual = transactions.Where(t => {
                         var leaf = categories.FirstOrDefault(c => c.Id == t.CategoryId);
                         while (leaf != null && leaf.ParentId != expenseRoot?.Id && leaf.ParentId != 0)
                             leaf = categories.FirstOrDefault(c => c.Id == leaf.ParentId);
-
-                        if (leaf != null && leaf.Id == cat.Id) actual += t.Debit;
-                    }
-
-                    var existingBudget = budgets.FirstOrDefault(b => b.CategoryId == cat.Id);
-                    decimal currentLimit = existingBudget?.BudgetAmount ?? 0;
+                        return leaf?.Id == catId;
+                    }).Sum(t => t.Debit);
 
                     if (actual > currentLimit)
                     {
                         decimal newTarget = Math.Ceiling(actual / 1000m) * 1000;
                         if (newTarget <= actual) newTarget += 1000;
 
-                        if (existingBudget != null)
-                        {
-                            // UPDATE existing
-                            existingBudget.BudgetAmount = newTarget;
-                            await existingBudget.Update<BudgetModel>();
-                        }
-                        else
-                        {
-                            // INSERT new
-                            var newBudget = new BudgetModel
-                            {
-                                UserId = userEmail,
-                                CategoryId = cat.Id ?? 0,
-                                Month = month,
-                                Year = year,
-                                BudgetAmount = newTarget,
-                                CreatedAt = DateTime.UtcNow
-                            };
-                            await _supabase.From<BudgetModel>().Insert(newBudget);
-                        }
-                        count++;
+                        Debug.WriteLine($"[FIX] {cat.Name}: {currentLimit} -> {newTarget}");
+
+                        var record = allBudgets.FirstOrDefault(b => b.CategoryId == catId && b.Month == month && b.Year == year)
+                                     ?? new BudgetModel { UserId = userEmail, CategoryId = catId, Month = month, Year = year };
+
+                        record.BudgetAmount = newTarget;
+
+                        if (record.Id > 0) await record.Update<BudgetModel>();
+                        else await _supabase.From<BudgetModel>().Insert(record);
+
+                        updatedCount++;
                     }
                 }
 
-                return Json(new { success = true, message = $"Updated {count} categories." });
+                return Json(new { success = true, message = $"Adjusted {updatedCount} overspent categories." });
             }
             catch (Exception ex)
             {
-                Debug.WriteLine($"[INCREASE ERROR] {ex.Message}");
+                Debug.WriteLine($"[SMART ERROR] {ex.Message}");
                 return Json(new { success = false, message = ex.Message });
             }
         }
