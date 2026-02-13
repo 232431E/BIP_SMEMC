@@ -1,6 +1,6 @@
 ﻿using BIP_SMEMC.Models;
-using Newtonsoft.Json;
-using BIP_SMEMC.Models;
+using Google.GenAI;
+using Google.GenAI.Types;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using System.Diagnostics;
@@ -11,331 +11,256 @@ namespace BIP_SMEMC.Services
 {
     public class GeminiService
     {
-        private readonly HttpClient _http;
-        private readonly string _apiKey;
-        private readonly string _model;
+        private readonly Client _client;
         private readonly Supabase.Client _db;
-        // Correct Endpoint for 1.5 Flash (v1beta)
-        private const string BaseUrl = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent";
-        public GeminiService(HttpClient http, IConfiguration config, Supabase.Client db)
+        // Define Model Priority List
+        private readonly string[] _models = new[] {"gemini-not"};
+            //new[] { 
+            //"gemini-2.5-flash", 
+            //"gemini-3-flash-preview", 
+            //"gemini-2.5-flash-lite",
+            //"gemini-2.0-flash" }; 
+        public GeminiService(IConfiguration config, Supabase.Client db)
         {
-            _http = http;
-            _apiKey = config["Gemini:ApiKey"];
-            _model = "gemini-2.5-flash";
+            var apiKey = config["Gemini:ApiKey"];
+            if (string.IsNullOrEmpty(apiKey)) throw new Exception("Gemini API Key is missing in appsettings.json");
+
+            // Initialize Official Google GenAI Client
+            _client = new Client(apiKey: apiKey);
             _db = db;
         }
 
-        public async Task<List<NewsOutlookModel>> GenerateIndustryOutlooks(List<NewsArticleModel> articles, List<string> industries, List<string> regions)
+        // =========================================================================
+        // CORE: SMART EXECUTION ENGINE (HANDLES FALLBACK, SDK, & LOGGING)
+        // =========================================================================
+        // Services/GeminiService.cs
+
+        private async Task<bool> IsOverQuota(string modelName)
         {
-            var url = $"{BaseUrl}?key={_apiKey}";
-
-            var contextBuilder = new StringBuilder();
-            // Limit increased to 50 for 2.5 Flash
-            foreach (var a in articles.Take(50))
-            {
-                contextBuilder.AppendLine($"- {a.Title} ({a.Source}) | Tags: {string.Join(",", a.Industries)}");
-                contextBuilder.AppendLine($"  Summary: {a.Summary}");
-            }
-
-            var promptText = $@"
-Role: Strategic Market Analyst for SMEs.
-Context Data (Recent News):
-{contextBuilder}
-
-Task:
-Analyze the news above. Identify trends affecting specific Industries and Regions.
-Cross-reference against these target lists:
-Industries: [{string.Join(", ", industries)}]
-Regions: [{string.Join(", ", regions)}]
-
-Output Requirements:
-For every Industry/Region combination that has RELEVANT news or implied impact in the data:
-1. 'industry': The specific industry name from the list.
-2. 'region': The specific region name from the list.
-3. 'outlook_summary': A 3-sentence strategic forecast for SMEs.
-4. 'key_events': One specific event or trend driving this outlook.
-5. 'top_leaders': Top 3 entities/companies mentioned or implied.
-
-Format:
-Return ONLY a valid JSON array of objects. No markdown.
-[{{ ""industry"": ""Tech"", ""region"": ""Global"", ""outlook_summary"": ""..."", ""key_events"": ""..."", ""top_leaders"": [] }}]";
-
-            Debug.WriteLine("==================================================");
-            Debug.WriteLine($"[GEMINI REQUEST] Generating Outlooks");
-            Debug.WriteLine($"[CONTEXT SIZE] {articles.Count} articles");
-            Debug.WriteLine("==================================================");
-
-            var requestBody = new { contents = new[] { new { parts = new[] { new { text = promptText } } } } };
-
             try
             {
-                var response = await _http.PostAsync(url, new StringContent(JsonConvert.SerializeObject(requestBody), Encoding.UTF8, "application/json"));
+                var today = DateTime.UtcNow.Date;
+                var countRes = await _db.From<AIResponseModel>()
+                    .Filter("version_tag", Postgrest.Constants.Operator.Equals, modelName)
+                    .Filter("date_key", Postgrest.Constants.Operator.Equals, today)
+                    .Count(Postgrest.Constants.CountType.Exact);
 
-                if (!response.IsSuccessStatusCode)
+                return countRes >= 18; // Threshold before switching
+            }
+            catch { return false; }
+        }
+
+        private async Task<string> ExecutePromptWithFallbackAsync(
+            string prompt,
+            string featureType,
+            string userId = "SYSTEM_BG_SERVICE",
+            bool expectJson = false)
+        {
+            foreach (var modelName in _models)
+            {
+                // 1. Quota Guard: Check if we have already used this model 18 times today
+                if (await IsOverQuota(modelName))
                 {
-                    var errorBody = await response.Content.ReadAsStringAsync();
-                    Debug.WriteLine($"[GEMINI HTTP ERROR] {response.StatusCode}: {errorBody}");
-                    return new List<NewsOutlookModel>();
+                    Debug.WriteLine($"[QUOTA SKIP] {modelName} is near limit. Trying next...");
+                    continue;
                 }
 
-                var json = await response.Content.ReadAsStringAsync();
-                // --- SAVE RAW RESPONSE TO DB ---
                 try
                 {
-                    var logEntry = new AIResponseModel
+                    Debug.WriteLine($"[GEMINI] Attempting {modelName}...");
+
+                    var config = new GenerateContentConfig
                     {
-                        UserId = "SYSTEM_BG_SERVICE",
-                        FeatureType = "NEWS_OUTLOOK",
-                        ResponseText = json, // Save full raw JSON
-                        Justification = "Daily Outlook Generation",
-                        VersionTag = "gemini-2.5-flash",
-                        DateKey = DateTime.UtcNow.Date,
-                        CreatedAt = DateTime.UtcNow
+                        Temperature = 0.4,
+                        MaxOutputTokens = 1500,
+                        ResponseMimeType = expectJson ? "application/json" : "text/plain"
                     };
-                    await _db.From<AIResponseModel>().Insert(logEntry);
-                    Debug.WriteLine("[DB LOG] Saved AI raw response.");
+
+                    var response = await _client.Models.GenerateContentAsync(modelName, prompt, config);
+                    var text = response?.Candidates?[0]?.Content?.Parts?[0]?.Text;
+
+                    if (string.IsNullOrWhiteSpace(text)) continue;
+
+                    // 2. Validate JSON if required
+                    if (expectJson)
+                    {
+                        try
+                        {
+                            var cleaned = CleanJson(text);
+                            Newtonsoft.Json.Linq.JToken.Parse(cleaned);
+                            await LogToSupabase(userId, featureType, text, $"Success via {modelName}");
+                            return cleaned; // SUCCESS: EXIT LOOP IMMEDIATELY
+                        }
+                        catch {
+                            Debug.WriteLine($"[GEMINI] {modelName} JSON invalid. Retrying...");
+                            continue;
+                        }
+                    }
+
+                    // 3. Text Success
+                    await LogToSupabase(userId, featureType, text, $"Success via {modelName}");
+                    return text; // SUCCESS: EXIT LOOP IMMEDIATELY
                 }
-                catch (Exception logEx) { Debug.WriteLine($"[DB LOG FAIL] {logEx.Message}"); }
-                // --------------------------------
-
-                if (!response.IsSuccessStatusCode) return new List<NewsOutlookModel>();
-
-                return ParseOutlookResponse(json);
+                catch (Exception ex)
+                {
+                    if (ex.Message.Contains("429")) continue;
+                    Debug.WriteLine($"[GEMINI ERROR] {modelName}: {ex.Message}");
+                }
             }
-            catch (Exception ex)
-            {
-                Debug.WriteLine($"[GEMINI CRITICAL ERROR] {ex.Message}");
-                return new List<NewsOutlookModel>();
-            }
+            return null;
         }
-
-        private List<NewsOutlookModel> ParseOutlookResponse(string json)
+        
+        private async Task LogToSupabase(string userId, string feature, string rawResponse, string justification)
         {
             try
             {
-                Debug.WriteLine("==================================================");
-                Debug.WriteLine($"[GEMINI RAW RESPONSE] Length: {json.Length}");
-                Debug.WriteLine("==================================================");
-
-                var obj = JObject.Parse(json);
-                var text = obj["candidates"]?[0]?["content"]?["parts"]?[0]?["text"]?.ToString();
-
-                if (string.IsNullOrEmpty(text))
+                var entry = new AIResponseModel
                 {
-                    Debug.WriteLine("[GEMINI PARSE FAIL] No candidate text found.");
-                    return new List<NewsOutlookModel>();
-                }
+                    UserId = userId,
+                    FeatureType = feature,
+                    ResponseText = rawResponse, // Saving the actual AI text response
+                    Justification = justification,
+                    VersionTag = "Google.GenAI SDK",
+                    DateKey = DateTime.UtcNow.Date,
+                    CreatedAt = DateTime.UtcNow
+                };
 
-                // Clean Markdown
-                string cleanJson = Regex.Replace(text, @"^```json\s*|\s*```$", "", RegexOptions.IgnoreCase | RegexOptions.Multiline).Trim();
-
-                // DEBUG: Print clean JSON to verify structure before deserialization
-                Debug.WriteLine($"[CLEAN JSON PREVIEW] {cleanJson.Substring(0, Math.Min(500, cleanJson.Length))}...");
-
-                var outlooks = JsonConvert.DeserializeObject<List<NewsOutlookModel>>(cleanJson);
-
-                if (outlooks == null)
-                {
-                    Debug.WriteLine("[GEMINI PARSE FAIL] Deserialization returned null.");
-                    return new List<NewsOutlookModel>();
-                }
-
-                Debug.WriteLine($"[GEMINI SUCCESS] Parsed {outlooks.Count} outlook items.");
-
-                // Validate items before returning
-                foreach (var o in outlooks)
-                {
-                    o.Date = DateTime.UtcNow.Date; // Ensure date is set
-                    if (o.TopLeaders == null) o.TopLeaders = new List<string>(); // Prevent null list errors
-                    // Log individual items to ensure fields are mapping correctly
-                    Debug.WriteLine($" -> Outlook: {o.Industry}/{o.Region} | Key Event: {o.KeyEvents?.Substring(0, Math.Min(20, o.KeyEvents?.Length ?? 0))}...");
-                }
-
-                return outlooks;
-            }
-            catch (JsonReaderException jex)
-            {
-                Debug.WriteLine($"[GEMINI JSON ERROR] {jex.Message}");
-                Debug.WriteLine($"[BAD JSON] {json}"); // Log full bad JSON for manual inspection
-                return new List<NewsOutlookModel>();
+                await _db.From<AIResponseModel>().Insert(entry);
+                Debug.WriteLine($"[DB LOG] Saved {feature} response to DB.");
             }
             catch (Exception ex)
             {
-                Debug.WriteLine($"[GEMINI PARSE ERROR] {ex.Message}");
-                return new List<NewsOutlookModel>();
-            }
-        }
-        public async Task<string> AnalyzeFinancialTrends(List<TransactionModel> history)
-        {
-            var url = $"{BaseUrl}?key={_apiKey}";
-
-            var monthlyStats = history
-                .GroupBy(t => t.Date.ToString("MMM yyyy"))
-                .Select(g => new {
-                    Month = g.Key,
-                    Net = g.Sum(t => t.Credit - t.Debit),
-                    In = g.Sum(t => t.Credit),
-                    Out = g.Sum(t => t.Debit)
-                }).ToList();
-
-            var summaryJson = JsonConvert.SerializeObject(monthlyStats);
-
-            var promptText = $@"
-Act as a Financial Analyst. Here is the monthly cashflow summary:
-{summaryJson}
-
-Task:
-1. Identify the trend (Growing/Declining).
-2. Point out the worst month.
-3. Give 1 specific recommendation.
-Keep it under 50 words.";
-
-            Debug.WriteLine($"[GEMINI REQ] AnalyzeTrends for {monthlyStats.Count} months.");
-
-            var request = new { contents = new[] { new { parts = new[] { new { text = promptText } } } } };
-
-            try
-            {
-                var response = await _http.PostAsync(url, new StringContent(JsonConvert.SerializeObject(request), Encoding.UTF8, "application/json"));
-
-                if (!response.IsSuccessStatusCode)
-                {
-                    var err = await response.Content.ReadAsStringAsync();
-                    Debug.WriteLine($"[GEMINI TRENDS ERROR] {response.StatusCode}: {err}");
-                    return "AI service unavailable.";
-                }
-
-                var json = await response.Content.ReadAsStringAsync();
-                var obj = JObject.Parse(json);
-                var text = obj["candidates"]?[0]?["content"]?["parts"]?[0]?["text"]?.ToString();
-                return text ?? "Analysis unavailable.";
-            }
-            catch (Exception ex)
-            {
-                Debug.WriteLine($"[AI TRENDS EXCEPTION] {ex.Message}");
-                return "AI Analysis error.";
+                Debug.WriteLine($"[DB LOG FAIL] Could not save AI log: {ex.Message}");
             }
         }
 
+        // =========================================================================
+        // MISSING METHOD RESTORED (Used by ChatbotController)
+        // =========================================================================
         public async Task<string> GenerateFinanceInsightAsync(string prompt)
         {
-            if (string.IsNullOrWhiteSpace(_apiKey))
+            // Wraps the new fallback logic
+            return await ExecutePromptWithFallbackAsync(prompt, "GENERAL_INSIGHT", "USER_ACTION", false)
+                   ?? "AI Service is currently unavailable.";
+        }
+
+        // =========================================================================
+        // FEATURE 1: INDUSTRY OUTLOOKS (Called by NewsBGService)
+        // =========================================================================
+        public async Task<List<NewsOutlookModel>> GenerateIndustryOutlooks(List<NewsArticleModel> articles, List<string> industries, List<string> regions)
+        {
+            var sb = new StringBuilder();
+            foreach (var a in articles.Take(40))
             {
-                return "Gemini API key is missing. Set Gemini:ApiKey in user secrets or environment variables.";
+                sb.AppendLine($"- {a.Title} ({a.Source}): {a.Summary}");
             }
 
-            var json = await SendPromptAsync(BuildGenerateUrl(_model), prompt, 0.25, 900);
+            var prompt = $@"
+            Role: Market Analyst.
+            News Context:
+            {sb}
+
+            Task: Analyze impacts for these Industries: [{string.Join(", ", industries)}] in Regions: [{string.Join(", ", regions)}].
+
+            Return ONLY a valid JSON array matching this schema exactly (No Markdown):
+            [
+              {{ 
+                ""industry"": ""string"", 
+                ""region"": ""string"", 
+                ""outlook_summary"": ""string"", 
+                ""key_events"": ""string""
+              }}
+            ]";
+
+            var jsonResponse = await ExecutePromptWithFallbackAsync(prompt, "NEWS_OUTLOOK", "SYSTEM_BG_SERVICE", true);
+
+            if (string.IsNullOrEmpty(jsonResponse)) return new List<NewsOutlookModel>();
+
             try
             {
-                var obj = JObject.Parse(json);
-                return obj["candidates"]?[0]?["content"]?["parts"]?[0]?["text"]?.ToString()
-                       ?? "No insight generated.";
-            }
-            catch
-            {
-                return "Unable to parse Gemini response.";
-            }
-        }
-        public async Task<(bool Success, string Content, bool QuotaExceeded)> GenerateFinanceChatJsonAsync(string systemInstruction, string contextJson, string userMessage)
-        {
-            if (string.IsNullOrWhiteSpace(_apiKey))
-            {
-                return (false, "Gemini API key is missing.", false);
-            }
+                var cleanJson = CleanJson(jsonResponse);
+                var outlooks = JsonConvert.DeserializeObject<List<NewsOutlookModel>>(cleanJson);
 
-            var prompt = new StringBuilder()
-                .AppendLine(systemInstruction)
-                .AppendLine()
-                .AppendLine("Financial context JSON:")
-                .AppendLine(contextJson)
-                .AppendLine()
-                .AppendLine("User question:")
-                .AppendLine(userMessage)
-                .AppendLine()
-                .AppendLine("Return valid JSON only with schema:")
-                .AppendLine("{\"answer\":\"...\",\"actionItems\":[\"...\"],\"whichNumbersIUsed\":{\"revenue\":0,\"expenses\":0,\"netProfit\":0,\"profitMargin\":0,\"topExpenseCategories\":[\"...\"]}}")
-                .ToString();
-
-            var url = BuildGenerateUrl(_model);
-
-            var delays = new[] { 400, 1200, 2400 };
-            for (var attempt = 0; attempt < delays.Length; attempt++)
-            {
-                using var response = await PostGenerateContentAsync(url, prompt, 0.3, 700);
-                var responseText = await response.Content.ReadAsStringAsync();
-
-                if (response.IsSuccessStatusCode)
+                if (outlooks != null)
                 {
-                    var text = ExtractGeminiText(responseText);
-                    if (!string.IsNullOrWhiteSpace(text))
-                    {
-                        return (true, text, false);
-                    }
-
-                    return (false, "Gemini returned an empty response.", false);
+                    foreach (var o in outlooks) o.Date = DateTime.UtcNow.Date;
                 }
-
-                if ((int)response.StatusCode == 429)
-                {
-                    if (attempt < delays.Length - 1)
-                    {
-                        await Task.Delay(delays[attempt]);
-                        continue;
-                    }
-
-                    return (false, "API quota exceeded", true);
-                }
-
-                return (false, $"Gemini request failed ({(int)response.StatusCode}).", false);
+                return outlooks ?? new List<NewsOutlookModel>();
             }
-
-            return (false, "Gemini request failed.", false);
-        }
-
-        private async Task<string> SendPromptAsync(string url, string prompt, double temperature = 0.4, int maxOutputTokens = 900)
-        {
-            using var response = await PostGenerateContentAsync(url, prompt, temperature, maxOutputTokens);
-            return await response.Content.ReadAsStringAsync();
-        }
-
-        private async Task<HttpResponseMessage> PostGenerateContentAsync(string url, string prompt, double temperature, int maxOutputTokens)
-        {
-            var request = new
+            catch (Exception ex)
             {
-                contents = new[]
-                {
-                    new
-                    {
-                        parts = new[] { new { text = prompt } }
-                    }
-                },
-                generationConfig = new
-                {
-                    temperature,
-                    maxOutputTokens
-                }
-            };
-
-            var payload = JsonConvert.SerializeObject(request);
-            return await _http.PostAsync(url, new StringContent(payload, Encoding.UTF8, "application/json"));
-        }
-
-        private static string ExtractGeminiText(string json)
-        {
-            try
-            {
-                var obj = JObject.Parse(json);
-                return obj["candidates"]?[0]?["content"]?["parts"]?[0]?["text"]?.ToString() ?? string.Empty;
-            }
-            catch
-            {
-                return string.Empty;
+                Debug.WriteLine($"[PARSE ERROR] Could not deserialize Outlooks: {ex.Message}");
+                return new List<NewsOutlookModel>();
             }
         }
 
-        private string BuildGenerateUrl(string model)
+        // =========================================================================
+        // FEATURE 2: CASHFLOW ANALYSIS (Called by CashFlowController)
+        // =========================================================================
+        public async Task<string> GenerateDetailedCashflowAnalysis(string jsonSummary)
         {
-            return $"https://generativelanguage.googleapis.com/v1/models/{model}:generateContent?key={_apiKey}";
+            var prompt = $@"
+            Role: Senior CFO. 
+            Data: {jsonSummary}
+
+            Task:
+            1. DETERMINE TREND: Is cashflow INCREASING or DECREASING?
+            2. DIAGNOSE: Why? Cite specific numbers/categories.
+            3. PREDICT: 3-Month Outlook.
+            4. ADVISE: One actionable step.
+
+            Format: Plain text, under 100 words.
+            ";
+
+            return await GenerateFinanceInsightAsync(prompt);
+        }
+
+        // =========================================================================
+        // FEATURE 3: FINANCIAL TRENDS (Legacy)
+        // =========================================================================
+        public async Task<string> AnalyzeFinancialTrends(List<TransactionModel> history)
+        {
+            var monthlyStats = history
+                .GroupBy(t => t.Date.ToString("MMM"))
+                .Select(g => new { Month = g.Key, Net = g.Sum(t => t.Credit - t.Debit) });
+
+            var json = JsonConvert.SerializeObject(monthlyStats);
+
+            var prompt = $@"
+            Analyze this monthly net cashflow trend: {json}.
+            Identify the worst month and give 1 tip. Keep it brief.
+            ";
+
+            return await GenerateFinanceInsightAsync(prompt);
+        }
+
+        // =========================================================================
+        // FEATURE 4: CHATBOT
+        // =========================================================================
+        public async Task<(bool Success, string Content, bool QuotaExceeded)> GenerateFinanceChatJsonAsync(string system, string context, string userMsg)
+        {
+            var prompt = $@"
+            {system}
+            
+            Context Data:
+            {context}
+
+            User Question: {userMsg}
+
+            Return strict JSON: {{ ""answer"": ""..."", ""actionItems"": [], ""whichNumbersIUsed"": {{...}} }}
+            ";
+
+            var response = await ExecutePromptWithFallbackAsync(prompt, "CHAT_BOT", "USER_CHAT", true);
+
+            if (response == null) return (false, "AI Service Busy.", true);
+
+            return (true, CleanJson(response), false);
+        }
+
+        // --- HELPER ---
+        private string CleanJson(string text)
+        {
+            return Regex.Replace(text, @"^```json\s*|\s*```$", "", RegexOptions.IgnoreCase | RegexOptions.Multiline).Trim();
         }
     }
 }

@@ -100,6 +100,88 @@ namespace BIP_SMEMC.Services
             Debug.WriteLine($"[DB FETCH] Total Retrieved: {allResults.Count}");
             return allResults;
         }
+
+        // 1. Helper to group data for AI (Saves tokens vs sending raw rows)
+        public object GetCashflowSummaryForAI(List<TransactionModel> transactions)
+        {
+            Debug.WriteLine($"[AI PREP] Summarizing {transactions.Count} transactions...");
+
+            var monthly = transactions
+                .GroupBy(t => t.Date.ToString("MMM yyyy"))
+                .Select(g => new
+                {
+                    Month = g.Key,
+                    Revenue = g.Where(t => t.Credit > 0).Sum(t => t.Credit),
+                    Expense = g.Where(t => t.Debit > 0).Sum(t => t.Debit),
+                    Net = g.Where(t => t.Credit > 0).Sum(t => t.Credit) - g.Where(t => t.Debit > 0).Sum(t => t.Debit)
+                }).ToList();
+
+            var topExpenses = transactions
+                .Where(t => t.Debit > 0)
+                .GroupBy(t => t.CategoryName ?? "Uncategorized")
+                .Select(g => new { Category = g.Key, Amount = g.Sum(t => t.Debit) })
+                .OrderByDescending(x => x.Amount)
+                .Take(5)
+                .ToList();
+
+            Debug.WriteLine($"[AI PREP] Generated {monthly.Count} monthly points and {topExpenses.Count} top expenses.");
+
+            return new
+            {
+                MonthlyTrend = monthly,
+                TopCostDrivers = topExpenses,
+                OverallNet = monthly.Sum(m => m.Net)
+            };
+        }
+        // 2. Specialized Saver for Cashflow Insights
+        public async Task SaveCashflowInsight(string userId, string insightText, string rangeLabel)
+        {
+            try
+            {
+                var entry = new AIResponseModel
+                {
+                    UserId = userId,
+                    FeatureType = "FINANCIAL_GRAPH_ANALYSIS", // Unique Key
+                    ResponseText = insightText,
+                    Justification = $"Automated analysis for {rangeLabel} range",
+                    VersionTag = "gemini-2.5-flash",
+                    DateKey = DateTime.UtcNow.Date,
+                    CreatedAt = DateTime.UtcNow
+                };
+
+                await _supabase.From<AIResponseModel>().Insert(entry);
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"[DB SAVE FAIL] {ex.Message}");
+            }
+        }
+        public double CalculateSeasonalityMultiplier(List<TransactionModel> history, int month)
+        {
+            if (!history.Any()) return 1.0;
+
+            // 1. Calculate Average Monthly Revenue across ALL months
+            var allMonths = history.Where(t => t.Credit > 0).GroupBy(t => t.Date.Month)
+                .Select(g => g.Sum(t => t.Credit)).ToList();
+
+            if (!allMonths.Any()) return 1.0;
+
+            double globalAvg = (double)allMonths.Average();
+            if (globalAvg == 0) return 1.0;
+
+            // 2. Calculate Average Revenue for TARGET month
+            var targetMonthData = history.Where(t => t.Credit > 0 && t.Date.Month == month)
+                .GroupBy(t => t.Date.Year)
+                .Select(g => g.Sum(t => t.Credit)).ToList();
+
+            if (!targetMonthData.Any()) return 1.0;
+
+            double targetAvg = (double)targetMonthData.Average();
+
+            // 3. Return Ratio (e.g., 12000 / 10000 = 1.2)
+            return targetAvg / globalAvg;
+        }
+
         // COMPLEX LOGIC: Seasonal changes based on historical monthly averages
         public double CalculateSeasonality(List<TransactionModel> history, int month)
         {

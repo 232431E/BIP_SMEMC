@@ -25,105 +25,117 @@ namespace BIP_SMEMC.Controllers
 
             try
             {
-                // 1. ANCHOR DATE & DATA
-                var anchorDate = await _financeService.GetLatestTransactionDate(userEmail);
-                model.LatestDataDate = anchorDate;
+                // 1. DATA SETUP
+                // 1. POPULATE VIEW BAGS FIRST (Fixes Empty Modal)
+                var userRes = await _supabase.From<UserModel>().Where(u => u.Email == userEmail).Get();
+                var userPrefs = userRes.Models.FirstOrDefault();
+                model.UserPreferences = userPrefs;
 
-                // 2. FETCH HISTORY (6 Months for Trend Analysis)
-                var startDate = anchorDate.AddMonths(-6);
-                var history = await _financeService.GetUserTransactions(userEmail, startDate, anchorDate);
-
-                // 1. METADATA & PREFERENCES
-                var categoriesList = (await _supabase.From<CategoryModel>().Get()).Models;
-                var catMap = categoriesList.ToDictionary(k => k.Id, v => v);
-                // Populate ViewBags for UI
                 var indList = (await _supabase.From<IndustryModel>().Get()).Models;
                 var regList = (await _supabase.From<RegionModel>().Get()).Models;
+
                 ViewBag.AllIndustries = indList.OrderBy(i => i.Name).ToList();
                 ViewBag.AllRegions = regList.OrderBy(r => r.Name).ToList();
 
-                
-                // 3. SMART TREND CALCULATION
-                // ---------------------------------------------------------
+                Debug.WriteLine($"[METADATA] Loaded {indList.Count} Industries, {regList.Count} Regions for Filter Modal.");
+
+                var categoriesList = (await _supabase.From<CategoryModel>().Get()).Models;
+                var catMap = categoriesList.ToDictionary(k => k.Id, v => v);
+
+                var anchorDate = await _financeService.GetLatestTransactionDate(userEmail);
+                model.LatestDataDate = anchorDate;
+
+                // Get 6 months history for the "Trend"
+                var startDate = anchorDate.AddMonths(-6);
+                var history = await _financeService.GetUserTransactions(userEmail, startDate, anchorDate);
+
+                // Map Category Names (needed for AI & Logic)
+                foreach (var t in history)
+                {
+                    if (t.CategoryId.HasValue && catMap.TryGetValue(t.CategoryId.Value, out var c))
+                        t.CategoryName = c.Name;
+                }
+
+                // 2. CALCULATE CHART DATA (Cumulative Balance)
                 decimal currentCash = 0;
-
-                // Buckets for Trend Analysis
-                decimal totalRev = 0;
-                decimal totalFixed = 0;
-                decimal totalVar = 0;
-                decimal excludedOneOffs = 0; // Track anomalies
-
-                // Keywords to detect anomalies that shouldn't affect future predictions
-                var anomalyKeywords = new[] { "renovation", "deposit", "setup fee", "equipment purchase", "one-time" };
-
                 var historicalPoints = new List<ChartDataPoint>();
 
                 foreach (var t in history.OrderBy(t => t.Date))
                 {
-                    // A. Actual Balance (Always includes everything)
                     currentCash += (t.Credit - t.Debit);
-
                     historicalPoints.Add(new ChartDataPoint
                     {
                         Date = t.Date.ToString("yyyy-MM-dd"),
                         Actual = currentCash
                     });
-
-                    // B. Trend Logic (Strict Filtering)
-                    if (t.CategoryId.HasValue && catMap.TryGetValue(t.CategoryId.Value, out var cat))
-                    {
-                        string catName = cat.Name.ToLower();
-                        string desc = (t.Description ?? "").ToLower();
-                        int parentId = cat.ParentId ?? 0;
-
-                        // 1. Ignore Non-Cash (Depreciation ID 88)
-                        if (catName.Contains("depreciation") || catName.Contains("amortization")) continue;
-
-                        if (t.Debit > 0) // Expense
-                        {
-                            // 2. Detect & Exclude One-Offs from Trend
-                            if (anomalyKeywords.Any(k => catName.Contains(k) || desc.Contains(k)))
-                            {
-                                excludedOneOffs += t.Debit;
-                                continue;
-                            }
-
-                            // 3. Handle Liabilities (Loan Repayments) - ID 278 is usually Long Term Liability
-                            // Even though not an "Expense" in P&L, it burns cash.
-                            if (parentId == 278 || catName.Contains("hire purchase") || catName.Contains("loan"))
-                            {
-                                totalFixed += t.Debit;
-                            }
-                            // 4. Fixed vs Variable
-                            else if (catName.Contains("rent") || catName.Contains("salary") || catName.Contains("insurance"))
-                            {
-                                totalFixed += t.Debit;
-                            }
-                            else
-                            {
-                                totalVar += t.Debit;
-                            }
-                        }
-                        else if (t.Credit > 0) // Revenue
-                        {
-                            totalRev += t.Credit;
-                        }
-                    }
                 }
-
                 model.CurrentBalance = currentCash;
                 model.ChartData.AddRange(historicalPoints);
 
-                // 4. GENERATE PROJECTION
-                int months = 6;
-                decimal avgRev = totalRev / months;
-                decimal avgFixed = totalFixed / months;
-                decimal varRatio = totalRev > 0 ? (totalVar / totalRev) : 0;
+                // 3. SMART FORECASTING ENGINE (Weighted + Anomaly Free)
+                // ----------------------------------------------------
+                decimal weightedRevenue = 0;
+                decimal weightedFixed = 0;
+                decimal weightedVar = 0;
+                decimal totalWeight = 0;
 
-                // Debugging Trend
-                Debug.WriteLine($"[TREND] Avg Rev: {avgRev:C}, Avg Fixed: {avgFixed:C}, Var Ratio: {varRatio:P1}");
-                Debug.WriteLine($"[ANOMALY] Excluded from trend: {excludedOneOffs:C}");
+                // Anomaly Keywords (One-off large expenses to ignore in forecast)
+                var anomalyKeywords = new[] { "renovation", "deposit", "equipment", "setup fee" };
 
+                // Group by Month to apply weighting
+                var monthlyGroups = history
+                    .GroupBy(t => new { t.Date.Year, t.Date.Month })
+                    .OrderBy(g => g.Key.Year).ThenBy(g => g.Key.Month)
+                    .ToList();
+
+                // Apply Weights: Most recent month = 3, Previous = 2, Others = 1
+                // This makes the forecast sensitive to recent changes (like a sudden rent hike)
+                for (int i = 0; i < monthlyGroups.Count; i++)
+                {
+                    var group = monthlyGroups[i];
+                    int weight = (i >= monthlyGroups.Count - 2) ? 3 : 1;
+
+                    decimal mRev = 0, mFixed = 0, mVar = 0;
+
+                    foreach (var t in group)
+                    {
+                        string cName = (t.CategoryName ?? "").ToLower();
+                        string desc = (t.Description ?? "").ToLower();
+
+                        // SKIP: Depreciation/Amortization
+                        if (cName.Contains("depreciation")) continue;
+
+                        if (t.Credit > 0) mRev += t.Credit;
+                        else if (t.Debit > 0)
+                        {
+                            // SKIP: Anomalies
+                            if (anomalyKeywords.Any(k => cName.Contains(k) || desc.Contains(k))) continue;
+
+                            // Classify Fixed vs Variable
+                            if (cName.Contains("rent") || cName.Contains("salary") || cName.Contains("loan") || cName.Contains("subscription"))
+                                mFixed += t.Debit;
+                            else
+                                mVar += t.Debit;
+                        }
+                    }
+
+                    weightedRevenue += (mRev * weight);
+                    weightedFixed += (mFixed * weight);
+                    weightedVar += (mVar * weight);
+                    totalWeight += weight;
+                }
+
+                // Calculate Weighted Averages per Month
+                decimal avgWRev = totalWeight > 0 ? weightedRevenue / totalWeight : 0;
+                decimal avgWFixed = totalWeight > 0 ? weightedFixed / totalWeight : 0;
+                decimal avgWVar = totalWeight > 0 ? weightedVar / totalWeight : 0;
+                decimal varRatio = avgWRev > 0 ? avgWVar / avgWRev : 0;
+
+                model.MonthlyFixedBurn = avgWFixed;
+                model.VariableCostRatio = varRatio;
+
+                // 4. GENERATE PROJECTION (Next 30 Days)
+                // ----------------------------------------------------
                 // Bridge Point
                 model.ChartData.Add(new ChartDataPoint
                 {
@@ -132,40 +144,63 @@ namespace BIP_SMEMC.Controllers
                     Predicted = currentCash
                 });
 
-                // 30 Day Forward Projection
-                decimal projBalance = currentCash;
-                decimal dailyRev = avgRev / 30m;
-                decimal dailyFixed = avgFixed / 30m;
+                // Calculate Seasonality (Optional: Apply specific month multiplier)
+                // For this month (Month + 1)
+                int nextMonth = anchorDate.AddMonths(1).Month;
+                double seasonalMult = _financeService.CalculateSeasonalityMultiplier(history, nextMonth);
 
-                for (int i = 1; i <= 30; i++)
+                var projections = GenerateSmartProjection(
+                    currentCash,
+                    anchorDate,
+                    avgWRev * (decimal)seasonalMult, // Apply seasonality to revenue 
+                    varRatio,
+                    avgWFixed
+                );
+
+                model.ChartData.AddRange(projections);
+                model.ProjectedCashIn30Days = projections.Last().Predicted ?? 0;
+
+                // Determine Runway Text
+                decimal netBurn = (avgWFixed + (avgWRev * varRatio)) - avgWRev;
+                model.CashRunway = netBurn > 0 && currentCash > 0
+                    ? $"{currentCash / netBurn:N1} Months Runway"
+                    : "Cashflow Positive";
+
+                // 5. AI DEEP ANALYSIS & PERSISTENCE
+                // ----------------------------------------------------
+                // Check if we already did analysis today
+                var existingAI = await _supabase.From<AIResponseModel>()
+                    .Where(x => x.UserId == userEmail && x.FeatureType == "FINANCIAL_GRAPH_ANALYSIS" && x.DateKey == DateTime.UtcNow.Date)
+                    .Limit(1)
+                    .Get();
+
+                if (existingAI.Models.Any())
                 {
-                    decimal dailyVar = dailyRev * varRatio;
-                    decimal dailyNet = dailyRev - dailyFixed - dailyVar;
-                    projBalance += dailyNet;
-
-                    model.ChartData.Add(new ChartDataPoint
-                    {
-                        Date = anchorDate.AddDays(i).ToString("yyyy-MM-dd"),
-                        Actual = null,
-                        Predicted = Math.Round(projBalance, 2)
-                    });
+                    model.AIAnalysis = existingAI.Models.First().ResponseText;
+                    Debug.WriteLine("[AI] Loaded cached analysis.");
                 }
+                else if (history.Count > 0)
+                {
+                    // Generate New
+                    var aiData = _financeService.GetCashflowSummaryForAI(history);
+                    string jsonSummary = Newtonsoft.Json.JsonConvert.SerializeObject(aiData);
+                    Debug.WriteLine($"[GEMINI SEND] Sending {jsonSummary.Length} chars of data to Gemini...");
+                    Debug.WriteLine("[GEMINI] Calling API...");
+                    var aiInsight = await HttpContext.RequestServices.GetRequiredService<GeminiService>()
+                        .GenerateDetailedCashflowAnalysis(jsonSummary);
+                    Debug.WriteLine($"[GEMINI] Received: {aiInsight.Substring(0, Math.Min(50, aiInsight.Length))}...");
+                    model.AIAnalysis = aiInsight;
 
-                model.MonthlyFixedBurn = avgFixed;
-                model.VariableCostRatio = varRatio;
-                model.ProjectedCashIn30Days = projBalance;
-
-                // Runway Calc
-                decimal burnRate = (avgFixed + (avgRev * varRatio)) - avgRev;
-                model.CashRunway = burnRate > 0 && currentCash > 0
-                    ? $"{currentCash / burnRate:N1} Months"
-                    : "Stable (Cash Positive)";
-
+                    // Save
+                    await _financeService.SaveCashflowInsight(userEmail, aiInsight, "6M Weighted Trend");
+                }
+                else
+                {
+                    model.AIAnalysis = "Insufficient data for analysis.";
+                }
                 // 5. FETCH NEWS (OPTIMIZED)
                 // Only fetch if preferences exist, otherwise don't slam the DB.
-                var userRes = await _supabase.From<UserModel>().Where(u => u.Email == userEmail).Get();
-                var userPrefs = userRes.Models.FirstOrDefault();
-                model.UserPreferences = userPrefs;
+                
 
                 // Fetch outlooks specific to user preferences
                 if (userPrefs != null)
@@ -190,6 +225,7 @@ namespace BIP_SMEMC.Controllers
                 // Populate Dropdowns for Modal
                 ViewBag.AllIndustries = (await _supabase.From<IndustryModel>().Get()).Models.OrderBy(i => i.Name).ToList();
                 ViewBag.AllRegions = (await _supabase.From<RegionModel>().Get()).Models.OrderBy(r => r.Name).ToList();
+                await LoadFilteredNews(model, model.UserPreferences);
             }
 
             catch (Exception ex)
@@ -199,7 +235,34 @@ namespace BIP_SMEMC.Controllers
 
             return View(model);
         }
+        // Updated Helper Method
+        private List<ChartDataPoint> GenerateSmartProjection(
+            decimal startBalance,
+            DateTime startDate,
+            decimal monthlyRev,
+            decimal varRatio,
+            decimal monthlyFixed)
+        {
+            var points = new List<ChartDataPoint>();
+            decimal balance = startBalance;
+            decimal dailyRevenue = monthlyRev / 30m;
+            decimal dailyFixed = monthlyFixed / 30m;
 
+            for (int i = 1; i <= 30; i++)
+            {
+                decimal dailyVar = dailyRevenue * varRatio;
+                decimal dailyNet = dailyRevenue - dailyFixed - dailyVar;
+                balance += dailyNet;
+
+                points.Add(new ChartDataPoint
+                {
+                    Date = startDate.AddDays(i).ToString("yyyy-MM-dd"),
+                    Actual = null,
+                    Predicted = Math.Round(balance, 2)
+                });
+            }
+            return points;
+        }
         // Helper to update prefs via AJAX
         [HttpPost]
         public async Task<IActionResult> UpdatePreferences(List<string> industries, List<string> regions)
@@ -207,17 +270,25 @@ namespace BIP_SMEMC.Controllers
             var userEmail = HttpContext.Session.GetString("UserEmail");
             if (string.IsNullOrEmpty(userEmail)) return Unauthorized();
 
-            var userRes = await _supabase.From<UserModel>().Where(u => u.Email == userEmail).Get();
-            var user = userRes.Models.FirstOrDefault();
+            Debug.WriteLine($"[PREFS] Updating for {userEmail}...");
 
-            if (user != null)
+            try
             {
-                user.Industries = industries ?? new List<string>();
-                user.Regions = regions ?? new List<string>();
-                await user.Update<UserModel>();
+                // FIX: Use explicit Set() and Where() to guarantee update
+                await _supabase.From<UserModel>()
+                    .Where(u => u.Email == userEmail)
+                    .Set(u => u.Industries, industries ?? new List<string>())
+                    .Set(u => u.Regions, regions ?? new List<string>())
+                    .Update();
+
+                Debug.WriteLine("[PREFS] Update Successful.");
                 return Json(new { success = true });
             }
-            return Json(new { success = false });
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"[PREFS ERROR] {ex.Message}");
+                return Json(new { success = false, message = ex.Message });
+            }
         }
 
         private async Task LoadFilteredNews(CashFlowViewModel model, UserModel prefs)

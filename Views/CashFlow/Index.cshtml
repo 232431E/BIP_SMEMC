@@ -6,9 +6,6 @@
             <h1 class="h3 fw-bold text-dark mb-1">Smart Cash Flow Forecast</h1>
             <p class="text-muted small mb-0">AI-driven projection excluding one-off anomalies.</p>
         </div>
-        <button class="btn btn-outline-primary btn-sm" data-bs-toggle="modal" data-bs-target="#newsPrefsModal">
-            <i class="bi bi-gear me-1"></i> Customize Feed
-        </button>
     </div>
 
     <div class="alert alert-primary border-0 shadow-sm d-flex align-items-center mb-4">
@@ -96,8 +93,18 @@
                             <p class="mt-2 text-muted mb-0">We analyze the last 6 months of your data to determine these baselines.</p>
                         </div>
                         <div class="col-md-4 border-end">
-                            <h6 class="fw-bold text-dark">2. Trend Explanation</h6>
-                            <p class="mb-0">Even with cash in the bank, if <strong>Monthly Burn</strong> (Rent + Salaries + Loan Repayments) exceeds <strong>Avg Net Revenue</strong>, the trend line points down. <span class="text-danger">Check Fixed Costs.</span></p>
+                            <h6 class="fw-bold text-dark">2. Trend Diagnosis</h6>
+                            <p class="mb-0">
+                                @if (Model.CurrentBalance > 0 && Model.ProjectedCashIn30Days < Model.CurrentBalance)
+                                {
+                                    <span class="text-danger fw-bold">Warning:</span> <span>Your Operations are burning cash.</span>
+                                    <br/><span class="small text-muted">You have cash now likely due to loans or past collections, but your daily expenses exceed your daily sales.</span>
+                                }
+                                else
+                                {
+                                    <span>Your trend follows your Net Operating Income.</span>
+                                }
+                            </p>
                         </div>
                         <div class="col-md-4">
                             <h6 class="fw-bold text-dark">3. Smart Filtering</h6>
@@ -174,10 +181,11 @@
                             <ul class="list-group list-group-flush">
                                 @foreach (var news in Model.News)
                                 {
+                                    bool isOld = (DateTime.UtcNow - news.Date).TotalDays > 1;
                                     <li class="list-group-item p-3">
                                         <a href="@news.Url" target="_blank" class="fw-bold text-decoration-none text-dark d-block mb-1">
-                                            @news.Title <i class="bi bi-box-arrow-up-right small text-muted ms-1"></i>
-                                        </a>
+                                            @news.Title 
+                                            @if(isOld) { <i class="text-muted small ms-2" style="font-size: 0.75rem;">(Posted on @news.Date.ToString("MMM dd"))</i> }                                        </a>
                                         <div class="mb-2">
                                             @foreach (var tag in (news.Industries ?? new List<string>()).Concat(news.Regions ?? new List<string>()))
                                             {

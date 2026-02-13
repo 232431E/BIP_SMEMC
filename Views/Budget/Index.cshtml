@@ -1,10 +1,44 @@
 ﻿@model BIP_SMEMC.Models.BudgetViewModel
 
 <div class="container-fluid p-4 bg-light min-vh-100">
+    <div class="row g-3 mb-4">
+        <div class="col-md-4">
+            <div class="card border-0 shadow-sm bg-danger text-white h-100">
+                <div class="card-body">
+                    <h6 class="small text-uppercase opacity-75 fw-bold">Budget Alerts</h6>
+                    <div id="overspentDetails" class="h5 mb-0">Calculating...</div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-4">
+            <div class="card border-0 shadow-sm bg-success text-white h-100">
+                <div class="card-body">
+                    <h6 class="small text-uppercase opacity-75 fw-bold mb-0">Within Budget</h6>
+                    <div id="savingsDetails" class="h5 mb-0">Calculating...</div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-4">
+            <div class="card border-0 shadow-sm bg-white h-100">
+                <div class="card-body">
+                    <h6 class="small text-uppercase text-muted fw-bold">Quick Actions</h6>
+                    <div class="d-flex gap-2 mt-2">
+                        <button class="btn btn-sm btn-outline-primary flex-grow-1" onclick="autoReallocate()">
+                            <i class="bi bi-shuffle"></i> Reallocate
+                        </button>
+                        <button class="btn btn-sm btn-outline-success flex-grow-1" onclick="smartIncrease()">
+                            <i class="bi bi-arrow-up-circle"></i> Fix All
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <div class="d-flex justify-content-between align-items-center mb-4">
         <div>
             <h1 class="h3 fw-bold text-dark mb-1">Budget Analysis</h1>
-            <p class="text-muted small mb-0">Track spending limits vs actuals</p>
+            <p class="text-muted small mb-0">Spending vs Allocated Limits</p>
         </div>
         <div class="btn-group shadow-sm">
             <button class="btn btn-sm btn-white border" onclick="updateRange(3)">3M</button>
@@ -13,56 +47,14 @@
         </div>
     </div>
 
-    <div class="row g-3 mb-4" id="topSummaryCards">
-        <div class="col-md-4">
-            <div class="card border-0 shadow-sm bg-danger text-white h-100">
-                <div class="card-body">
-                    <h6 class="small text-uppercase opacity-75 fw-bold">Budget Alerts</h6>
-                    <div id="overspentDetails" class="small mt-2">Calculating...</div>
-                </div>
-            </div>
-        </div>
-        <div class="col-md-4">
-            <div class="card border-0 shadow-sm bg-success text-white h-100">
-                <div class="card-body">
-                    <div class="d-flex justify-content-between align-items-center mb-1">
-                        <h6 class="small text-uppercase opacity-75 fw-bold mb-0">Within Budget</h6>
-                    </div>
-                    <div id="savingsDetails" class="small mt-2">Calculating...</div>
-                </div>
-            </div>
-        </div>
-        <div class="col-md-4">
-            <div class="card border-0 shadow-sm bg-white h-100">
-                <div class="card-body">
-                    <h6 class="small text-uppercase text-muted fw-bold">Total Net Variance</h6>
-                    <h3 id="netVariance" class="fw-bold mb-2 text-dark">$0.00</h3>
-
-                    <button class="btn btn-sm btn-outline-primary w-100" onclick="autoReallocate()">
-                        <i class="bi bi-magic me-1"></i> Auto-Reallocate
-                    </button>
-                </div>
-            </div>
-        </div>
-    </div>
-
     <div class="card border-0 shadow-sm mb-4">
         <div class="card-header bg-white py-3 d-flex justify-content-between align-items-center">
-            <div>
-                <h6 id="chartHeader" class="fw-bold m-0"><i class="bi bi-bar-chart-fill me-2"></i>Spending Trend vs Budget</h6>
-                <small id="chartSubHeader" class="text-muted">Bars: Actual Spend | Line: Total Budget Limit</small>
-            </div>
-            <button id="resetChartBtn" class="btn btn-sm btn-outline-primary d-none" onclick="backToTrend()">
-                <i class="bi bi-arrow-left"></i> Back to Trend
-            </button>
+            <h6 id="chartHeader" class="fw-bold m-0">Spending Trend</h6>
+            <button id="resetChartBtn" class="btn btn-sm btn-outline-primary d-none" onclick="backToTrend()">Back to Trend</button>
         </div>
         <div class="card-body">
-            <div id="mainChartContainer" style="height: 400px; width: 100%;">
-                <canvas id="mainBudgetChart"></canvas>
-            </div>
-            <div id="breakdownContainer" class="d-none" style="height: 400px; width: 100%;">
-                <canvas id="breakdownChart"></canvas>
-            </div>
+            <div id="mainChartContainer" style="height: 350px;"><canvas id="mainBudgetChart"></canvas></div>
+            <div id="breakdownChartContainer" class="d-none" style="height: 350px;"><canvas id="breakdownChart"></canvas></div>
         </div>
     </div>
 
@@ -70,78 +62,62 @@
         <div class="col-lg-5">
             <div class="card border-0 shadow-sm h-100">
                 <div class="card-header bg-white py-3 d-flex justify-content-between align-items-center">
-                    <h6 class="fw-bold m-0">Category Performance</h6>
-                    <button class="btn btn-sm btn-primary" onclick="openBudgetModal(null, 0)">
-                        <i class="bi bi-plus-lg"></i> Set Budget
-                    </button>
+                    <h6 class="fw-bold m-0">Performance: <span id="selectedMonthLabel">...</span></h6>
+                    <button class="btn btn-sm btn-primary" onclick="openBudgetModal(null, 0, true)">+ Set Budget</button>
                 </div>
-
-                <div class="px-3 py-2 bg-light border-bottom d-flex justify-content-between align-items-center">
-                    <span class="small fw-bold text-muted text-uppercase">Monthly Budget Limit</span>
+                <div class="px-3 py-2 bg-light border-bottom d-flex justify-content-between align-items-center font-monospace">
+                    <span class="small fw-bold text-muted">MONTHLY LIMIT:</span>
                     <span id="monthTotalBudgetLabel" class="fw-bold text-primary">$0.00</span>
                 </div>
-
                 <div class="card-body p-0 d-flex flex-column" style="height: 550px;">
-                    <div id="healthListContainer" class="flex-grow-1" style="overflow-y: auto;">
-                        <div class="text-center text-muted p-4">Loading data...</div>
-                    </div>
+                    <div id="healthListContainer" class="flex-grow-1" style="overflow-y: auto;"></div>
 
-                    <div class="accordion accordion-flush border-top" id="inactiveAccordion">
+                    <div class="accordion accordion-flush border-top" id="unusedAccordion">
                         <div class="accordion-item">
                             <h2 class="accordion-header">
-                                <button class="accordion-button collapsed py-2 small text-muted bg-light" type="button" data-bs-toggle="collapse" data-bs-target="#inactiveCollapse">
-                                    <i class="bi bi-eye-slash me-2"></i> Show Inactive Categories (<span id="inactiveCount">0</span>)
+                                <button class="accordion-button collapsed py-2 small text-muted bg-light" type="button" data-bs-toggle="collapse" data-bs-target="#unusedCollapse">
+                                    Unused Categories (<span id="unusedCount">0</span>)
                                 </button>
                             </h2>
-                            <div id="inactiveCollapse" class="accordion-collapse collapse" data-bs-parent="#inactiveAccordion">
-                                <div class="accordion-body p-0">
-                                    <div id="inactiveListContainer" style="max-height: 150px; overflow-y: auto;">
-                                    </div>
-                                </div>
+                            <div id="unusedCollapse" class="accordion-collapse collapse" data-bs-parent="#unusedAccordion">
+                                <div class="accordion-body p-0" id="unusedListContainer" style="max-height: 200px; overflow-y: auto;"></div>
                             </div>
                         </div>
                     </div>
-
                 </div>
             </div>
         </div>
 
         <div class="col-lg-7">
             <div class="card border-0 shadow-sm h-100">
-                <div class="card-header bg-white py-3">
+                <div class="card-header bg-white py-3 d-flex justify-content-between align-items-center">
                     <h6 class="fw-bold m-0" id="tableTitle">Transactions</h6>
-                </div>
-
-                <div class="p-2 border-bottom bg-light d-flex justify-content-between align-items-center">
-                    <div class="d-flex align-items-center gap-2">
-                        <label class="small text-muted">Show</label>
-                        <select id="rowsPerPageSelect" class="form-select form-select-sm" style="width: 70px;" onchange="changePageSize()">
+                    <div class="d-flex gap-2">
+                        <select id="pageSizeSelect" class="form-select form-select-sm" style="width: 80px;" onchange="changePageSize()">
                             <option value="10">10</option>
-                            <option value="25" selected>25</option>
-                            <option value="50">50</option>
+                            <option value="20" selected>20</option>
                         </select>
+                        <button class="btn btn-xs btn-outline-secondary" onclick="clearTableFilters()">Show All</button>
                     </div>
-                    <button class="btn btn-xs btn-outline-secondary" onclick="clearTableFilters()">Show All</button>
                 </div>
-
                 <div class="table-responsive">
-                    <table class="table table-hover table-sm align-middle mb-0 small">
+                    <table class="table table-hover table-sm small mb-0">
                         <thead class="table-light">
-                            <tr><th>Date</th><th>Description</th><th>Group</th><th class="text-end">Amount</th></tr>
+                            <tr>
+                                <th class="cursor-pointer" onclick="sortTable('Date')">Date <i class="bi bi-arrow-down-up"></i></th>
+                                <th>Description</th>
+                                <th>Category</th>
+                                <th class="text-end cursor-pointer" onclick="sortTable('Amount')">Amount <i class="bi bi-arrow-down-up"></i></th>
+                            </tr>
                         </thead>
                         <tbody id="budgetLedgerBody"></tbody>
                     </table>
                 </div>
-
-                <div class="card-footer bg-white border-top-0 py-3">
-                    <div class="d-flex justify-content-between align-items-center">
-                        <span class="small text-muted" id="pageInfoLabel">0 records</span>
-                        <nav>
-                            <ul class="pagination pagination-sm mb-0">
-                                <li class="page-item"><button class="page-link" onclick="changePage(-1)" id="btnPrev">Prev</button></li>
-                                <li class="page-item"><button class="page-link" onclick="changePage(1)" id="btnNext">Next</button></li>
-                            </ul>
-                        </nav>
+                <div class="card-footer bg-white border-top-0 d-flex justify-content-between align-items-center py-2">
+                    <span id="pageInfoLabel" class="extra-small text-muted"></span>
+                    <div class="btn-group">
+                        <button class="btn btn-xs btn-outline-primary" onclick="changePage(-1)">Prev</button>
+                        <button class="btn btn-xs btn-outline-primary" onclick="changePage(1)">Next</button>
                     </div>
                 </div>
             </div>
@@ -153,27 +129,39 @@
     <div class="modal-dialog modal-sm">
         <div class="modal-content border-0 shadow">
             <div class="modal-header border-0 pb-0">
-                <h6 class="fw-bold">Set Budget Limit</h6>
+                <h6 class="fw-bold" id="modalTitle">Set Budget</h6>
                 <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
             </div>
             <div class="modal-body">
-                <label class="small text-muted mb-1">Category</label>
-                <select id="modalCatId" class="form-select form-select-sm mb-3">
-                    @foreach (var cat in Model.ExpenseCategories)
+                <div id="modalSearchContainer">
+                    <label class="small text-muted">Search Category</label>
+                    <input type="text" id="modalSearch" class="form-control form-control-sm mb-2" placeholder="Type to search..." onkeyup="filterModalSelect()">
+                </div>
+                <label class="small text-muted">Category</label>
+                <select id="modalCatId" class="form-select form-select-sm mb-3" size="5">
+                    @foreach (var cat in Model.ExpenseCategoriesDTO.OrderBy(x => x.Name))
                     {
                         <option value="@cat.Id">@cat.Name</option>
                     }
                 </select>
-                <label class="small text-muted mb-1">Monthly Limit ($)</label>
-                <input type="number" id="modalAmount" class="form-control form-control-sm mb-3">
+                <label class="small text-muted">Monthly Limit ($)</label>
+                <input type="number" id="modalAmount" class="form-control form-control-sm mb-3" placeholder="0.00">
                 <div class="row g-2">
                     <div class="col-6">
                         <label class="small text-muted">Month</label>
                         <select id="modalMonth" class="form-select form-select-sm">
-                            @for (int i = 1; i <= 12; i++)
-                            {
-                                <option value="@i">@i</option>
-                            }
+                            <option value="1">January</option>
+                            <option value="2">February</option>
+                            <option value="3">March</option>
+                            <option value="4">April</option>
+                            <option value="5">May</option>
+                            <option value="6">June</option>
+                            <option value="7">July</option>
+                            <option value="8">August</option>
+                            <option value="9">September</option>
+                            <option value="10">October</option>
+                            <option value="11">November</option>
+                            <option value="12">December</option>
                         </select>
                     </div>
                     <div class="col-6">
@@ -181,433 +169,259 @@
                         <input type="number" id="modalYear" class="form-control form-control-sm">
                     </div>
                 </div>
-                <div class="alert alert-light border mt-3 mb-0 p-2 small text-muted">
-                    <i class="bi bi-info-circle me-1"></i> Applies to future months.
-                </div>
             </div>
             <div class="modal-footer border-0 pt-0">
-                <button type="button" class="btn btn-sm btn-primary w-100" onclick="saveBudgetChange()">Save</button>
+                <button type="button" class="btn btn-sm btn-primary w-100" onclick="saveBudgetChange()">Save Changes</button>
             </div>
         </div>
     </div>
 </div>
-
 @section Scripts {
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script>
-        const transactions = @Html.Raw(Json.Serialize(Model.AllTransactions));
-        const categories = @Html.Raw(Json.Serialize(Model.ExpenseCategories));
-        const budgetHistory = @Html.Raw(Json.Serialize(Model.BudgetRecords));
-        const latestDateStr = "@Model.LatestDataDate.ToString("yyyy-MM-dd")";
-        const latestDate = new Date(latestDateStr);
+        const transactions = @Html.Raw(Newtonsoft.Json.JsonConvert.SerializeObject(Model.AllTransactionsDTO));
+        const categories = @Html.Raw(Newtonsoft.Json.JsonConvert.SerializeObject(Model.ExpenseCategoriesDTO));
+        const budgetHistory = @Html.Raw(Newtonsoft.Json.JsonConvert.SerializeObject(Model.BudgetsDTO));
+        const latestDate = new Date("@Model.LatestDataDate.ToString("yyyy-MM-dd")");
 
         let state = {
             activeRange: 3,
             currentMonthObj: null,
             selectedCategory: null,
             tableData: [],
+            pageSize: 15,
             currentPage: 1,
-            pageSize: 25
+            sortCol: 'Date',
+            sortDir: -1,
+            isBreakdown: false
         };
 
-        // --- 1. PASTEL COLOR PALETTE (Eye-Friendly) ---
-        const pastelColors = [
-            '#FF6B6B', // Pastel Red
-            '#FF9F43', // Pastel Orange
-            '#F6E58D', // Pastel Yellow
-            '#78E08F', // Pastel Green
-            '#54A0FF', // Pastel Blue
-            '#5F27CD', // Pastel Indigo
-            '#C44569', // Pastel Pink
-            '#00D2D3', // Pastel Cyan
-            '#8395A7'  // Pastel Grey
-        ];
-
-        function getCategoryColor(index) {
-            return pastelColors[index % pastelColors.length];
-        }
-
+        const pastelColors = ['#FFADAD', '#FFD6A5', '#FDFFB6', '#CAFFBF', '#9BF6FF', '#A0C4FF', '#BDB2FF', '#FFC6FF'];
         let mainChart, breakdownChart;
 
-        // --- 2. AUTO-LOAD FIX ---
-        document.addEventListener("DOMContentLoaded", function() {
-            // Trigger update range which builds the chart
-            updateRange(3);
-        });
+        document.addEventListener("DOMContentLoaded", () => updateRange(3));
 
-        function getEffectiveBudget(catId, currentMonth, currentYear) {
-            const catHistory = budgetHistory.filter(b => b.categoryId === catId);
-            catHistory.sort((a, b) => {
-                if (a.year !== b.year) return b.year - a.year;
-                return b.month - a.month;
-            });
-            const match = catHistory.find(b =>
-                b.year < currentYear || (b.year === currentYear && b.month <= currentMonth)
-            );
-            return match ? match.budgetAmount : 1000;
+        // Logic: Search backward for most recent budget record
+        function getEffectiveBudget(catId, month, year) {
+            const history = budgetHistory.filter(b => b.CategoryId === catId);
+            const sorted = history.sort((a, b) => b.Year !== a.Year ? b.Year - a.Year : b.Month - a.Month);
+            const match = sorted.find(b => (b.Year < year) || (b.Year === year && b.Month <= month));
+            return match ? match.BudgetAmount : 0;
         }
 
-        function updateRange(r) {
-            state.activeRange = r;
-            document.querySelectorAll('.btn-group button').forEach(b => {
-                b.classList.remove('active', 'btn-secondary');
-                b.classList.add('btn-white');
-            });
-            // Highlight active button (if triggered by click, else defaults to first)
-            const clickedBtn = event ? event.target : document.querySelector('.btn-group button');
-            if(clickedBtn && clickedBtn.tagName === 'BUTTON') {
-                clickedBtn.classList.remove('btn-white');
-                clickedBtn.classList.add('active', 'btn-secondary');
-            }
-            renderTrendChart();
-        }
-
-        function getMonthRange() {
-            const labels = [];
-            for (let i = state.activeRange - 1; i >= 0; i--) {
-                const d = new Date(latestDate.getFullYear(), latestDate.getMonth() - i, 1);
-                labels.push({
-                    month: d.getMonth() + 1,
-                    year: d.getFullYear(),
-                    label: d.toLocaleString('default', { month: 'short', year: '2-digit' })
-                });
-            }
-            return labels;
-        }
-
-        // --- 3. CHARTS ---
         function renderTrendChart() {
-            const months = getMonthRange();
-            const ctx = document.getElementById('mainBudgetChart').getContext('2d');
-
-            document.getElementById('breakdownContainer').classList.add('d-none');
+            state.isBreakdown = false;
             document.getElementById('mainChartContainer').classList.remove('d-none');
+            document.getElementById('breakdownChartContainer').classList.add('d-none');
             document.getElementById('resetChartBtn').classList.add('d-none');
             document.getElementById('chartHeader').innerText = "Spending Trend vs Budget";
-            document.getElementById('chartSubHeader').innerText = "Bars: Actual Spend | Line: Total Budget Limit";
 
-            const budgetLineData = months.map(m => {
-                return categories.reduce((sum, cat) => sum + getEffectiveBudget(cat.id, m.month, m.year), 0);
-            });
+            const months = getMonthRange();
+            const budgetLineData = months.map(m => categories.reduce((sum, cat) => sum + getEffectiveBudget(cat.Id, m.month, m.year), 0));
 
-            // Filter datasets: Only show categories that have actual spending in the range
-            let activeCatIndex = 0;
-            const barDatasets = categories.map((cat) => {
-                const dataPoints = months.map(m => transactions
-                    .filter(t => t.parentCategoryName === cat.name && new Date(t.date).getMonth()+1 === m.month && new Date(t.date).getFullYear() === m.year)
-                    .reduce((s, t) => s + t.debit, 0));
-
-                if (dataPoints.some(v => v > 0)) {
-                    // Only assign color if active
-                    const color = getCategoryColor(activeCatIndex++);
-                    return {
-                        type: 'bar',
-                        label: cat.name,
-                        data: dataPoints,
-                        backgroundColor: color,
-                        barPercentage: 0.6
-                    };
-                }
-                return null;
-            }).filter(ds => ds !== null);
-
-            const mixedDatasets = [
-                {
-                    type: 'line',
-                    label: 'Total Budget Limit',
-                    data: budgetLineData,
-                    borderColor: '#495057',
-                    borderWidth: 2,
-                    borderDash: [5, 5],
-                    pointRadius: 0,
-                    tension: 0.2,
-                    fill: false,
-                    order: 0
-                },
-                ...barDatasets
-            ];
+            const datasets = categories.map((cat, i) => {
+                const dataPoints = months.map(m => transactions.filter(t => t.CategoryName === cat.Name && new Date(t.Date).getMonth()+1 === m.month && new Date(t.Date).getFullYear() === m.year).reduce((s,t) => s + t.Amount, 0));
+                return dataPoints.some(v => v > 0) ? { type: 'bar', label: cat.Name, data: dataPoints, backgroundColor: pastelColors[i % pastelColors.length], stack: 'A' } : null;
+            }).filter(d => d !== null);
 
             if(mainChart) mainChart.destroy();
-            mainChart = new Chart(ctx, {
-                data: { labels: months.map(m => m.label), datasets: mixedDatasets },
+            mainChart = new Chart(document.getElementById('mainBudgetChart'), {
+                data: { labels: months.map(m => m.label), datasets: [{ type: 'line', label: 'Total Limit', data: budgetLineData, borderColor: '#333', fill: false, pointRadius: 2 }, ...datasets] },
                 options: {
                     responsive: true, maintainAspectRatio: false,
-                    scales: { x: { stacked: true }, y: { stacked: true, beginAtZero: true } },
-                    plugins: {
-                        legend: { display: true, position: 'top', labels: { boxWidth: 10, usePointStyle: true, font: { size: 11 } } }
-                    },
-                    onClick: (e, elements) => {
-                        if(elements.length > 0) {
-                            const chart = e.chart;
-                            const points = chart.getElementsAtEventForMode(e, 'index', { intersect: false }, true);
-                            if (points.length) enterMonthView(months[points[0].index]);
-                        }
-                    }
+                    scales: { x: { stacked: true }, y: { stacked: true } },
+                    onClick: (e, el) => { if(el.length) { state.isBreakdown = true; enterMonthView(months[el[0].index]); } }
                 }
             });
-
-            if(months.length > 0) enterMonthView(months[months.length-1], false);
+            enterMonthView(months[months.length-1]);
         }
 
-        function enterMonthView(mObj, switchChart = true) {
-            state.currentMonthObj = mObj;
-            state.selectedCategory = null;
-            renderHealthList(mObj);
-            filterAndRenderTable();
-            if(switchChart) renderComparisonChart(mObj);
-        }
-
-        function renderComparisonChart(mObj) {
+        function renderBreakdownChart(mObj) {
             document.getElementById('mainChartContainer').classList.add('d-none');
-            document.getElementById('breakdownContainer').classList.remove('d-none');
+            document.getElementById('breakdownChartContainer').classList.remove('d-none');
             document.getElementById('resetChartBtn').classList.remove('d-none');
-            document.getElementById('chartHeader').innerText = `Actual vs Budget (${mObj.label})`;
+            document.getElementById('chartHeader').innerText = `Breakdown: ${mObj.label}`;
 
-            const ctx = document.getElementById('breakdownChart').getContext('2d');
-            const labels = [];
-            const actuals = [];
-            const budgets = [];
-            const colors = [];
-
-            // Only chart active categories for the pie/bar comparison
-            let activeIndex = 0;
-            categories.forEach(c => {
-                const act = transactions
-                    .filter(t => t.parentCategoryName === c.name && new Date(t.date).getMonth()+1 === mObj.month && new Date(t.date).getFullYear() === mObj.year)
-                    .reduce((s,t) => s + t.debit, 0);
-
-                if (act > 0) {
-                    labels.push(c.name);
-                    actuals.push(act);
-                    budgets.push(getEffectiveBudget(c.id, mObj.month, mObj.year));
-                    colors.push(getCategoryColor(activeIndex++));
-                }
-            });
+            const activeCats = categories.map(c => ({
+                name: c.Name,
+                actual: transactions.filter(t => t.CategoryName === c.Name && new Date(t.Date).getMonth()+1 === mObj.month && new Date(t.Date).getFullYear() === mObj.year).reduce((s,t) => s + t.Amount, 0),
+                budget: getEffectiveBudget(c.Id, mObj.month, mObj.year)
+            })).filter(x => x.actual > 0 || x.budget > 0);
 
             if(breakdownChart) breakdownChart.destroy();
-            breakdownChart = new Chart(ctx, {
+            breakdownChart = new Chart(document.getElementById('breakdownChart'), {
                 type: 'bar',
                 data: {
-                    labels: labels,
+                    labels: activeCats.map(x => x.name),
                     datasets: [
-                        { label: 'Actual', data: actuals, backgroundColor: colors },
-                        { label: 'Budget', data: budgets, backgroundColor: '#e9ecef', borderColor: '#adb5bd', borderWidth: 1 }
+                        { label: 'Actual', data: activeCats.map(x => x.actual), backgroundColor: pastelColors[0], barPercentage: 0.5 },
+                        { label: 'Budget', data: activeCats.map(x => x.budget), backgroundColor: '#E9ECEF', borderColor: '#CCC', borderWidth: 1, barPercentage: 0.5 }
                     ]
                 },
-                options: {
-                    responsive: true, maintainAspectRatio: false,
-                    onClick: (e, elements) => {
-                        if(elements.length > 0) filterByHealthList(labels[elements[0].index]);
-                    }
+                options: { responsive: true, maintainAspectRatio: false,
+                    onClick: (e, el) => { if(el.length) filterByHealthList(activeCats[el[0].index].name); }
                 }
             });
         }
 
-        function backToTrend() { renderTrendChart(); }
-
-        // --- 4. HEALTH LIST + INACTIVE ACCORDION ---
         function renderHealthList(mObj) {
             const container = document.getElementById('healthListContainer');
-            const inactiveContainer = document.getElementById('inactiveListContainer');
-            const inactiveCountLabel = document.getElementById('inactiveCount');
+            const unusedContainer = document.getElementById('unusedListContainer');
+            container.innerHTML = ''; unusedContainer.innerHTML = '';
 
-            container.innerHTML = '';
-            inactiveContainer.innerHTML = '';
+            let totalB = 0, over = 0, under = 0, unusedCount = 0;
 
-            let totalVar = 0;
-            let totalBudget = 0;
-            let overspentCount = 0;
-            let inactiveCount = 0;
+            categories.forEach(cat => {
+                const actual = transactions.filter(t => t.CategoryName === cat.Name && new Date(t.Date).getMonth()+1 === mObj.month && new Date(t.Date).getFullYear() === mObj.year).reduce((s,t) => s + t.Amount, 0);
+                const budget = getEffectiveBudget(cat.Id, mObj.month, mObj.year);
 
-            const catData = categories.map(cat => {
-                const actual = transactions
-                    .filter(t => t.parentCategoryName === cat.name &&
-                                 (new Date(t.date).getMonth()+1) === mObj.month &&
-                                 new Date(t.date).getFullYear() === mObj.year)
-                    .reduce((sum, t) => sum + t.debit, 0);
-
-                const budget = getEffectiveBudget(cat.id, mObj.month, mObj.year);
-                totalBudget += budget;
-                totalVar += (budget - actual);
-                if(actual > budget) overspentCount++;
-
-                return { cat, actual, budget, pct: (budget > 0 ? (actual/budget)*100 : 0) };
-            }).sort((a,b) => b.pct - a.pct); // Sort high usage first
-
-            // Update Summaries
-            document.getElementById('monthTotalBudgetLabel').innerText = `$${totalBudget.toLocaleString()}`;
-            document.getElementById('netVariance').innerText = `$${totalVar.toLocaleString('en-US', {minimumFractionDigits:0, maximumFractionDigits:0})}`;
-            document.getElementById('netVariance').className = totalVar >= 0 ? "fw-bold mb-0 text-success" : "fw-bold mb-0 text-danger";
-            document.getElementById('overspentDetails').innerHTML = overspentCount > 0
-                ? `<span class="text-white fw-bold">${overspentCount} categories over limit</span>`
-                : "All categories within limits";
-
-            // Render
-            catData.forEach(item => {
-                // Logic: Hide if 0 Actual Spend. (Budget doesn't matter for clutter reduction)
-                if (item.actual === 0) {
-                    inactiveCount++;
-                    inactiveContainer.innerHTML += `
-                        <div class="px-3 py-2 border-bottom d-flex justify-content-between align-items-center bg-white">
-                            <span class="small text-muted">${item.cat.name}</span>
-                            <div class="d-flex align-items-center gap-2">
-                                <span class="badge bg-light text-secondary border">Limit: $${item.budget.toLocaleString()}</span>
-                                <button class="btn btn-link p-0 text-muted" onclick="openBudgetModal(${item.cat.id}, ${item.budget})" title="Edit"><i class="bi bi-pencil-square" style="font-size:0.8rem"></i></button>
-                            </div>
-                        </div>`;
+                if(actual === 0 && budget === 0) {
+                    unusedCount++;
+                    unusedContainer.innerHTML += `<div class="p-2 border-bottom small text-muted d-flex justify-content-between align-items-center">${cat.Name} <button class="btn btn-link btn-xs p-0" onclick="openBudgetModal(${cat.Id}, 0, true)">Add</button></div>`;
                     return;
                 }
 
-                // Active Items
-                let color = 'bg-success';
-                let textColor = 'text-success';
-                if(item.pct >= 100) { color = 'bg-danger'; textColor = 'text-danger'; }
-                else if(item.pct >= 85) { color = 'bg-warning'; textColor = 'text-warning'; }
-
-                const isSelected = state.selectedCategory === item.cat.name;
-                const activeClass = isSelected ? "bg-light border-primary" : "border-light";
-
-                // Calculate Overspend for logic
-                const isOverBudget = item.actual > item.budget;
+                totalB += budget;
+                actual > budget ? over++ : under++;
+                const pct = budget > 0 ? (actual/budget)*100 : 100;
+                const color = actual > budget ? 'bg-danger' : (pct > 85 ? 'bg-warning' : 'bg-success');
 
                 container.innerHTML += `
-                    <div class="p-3 border-bottom ${activeClass} position-relative">
-                        <div class="d-flex justify-content-between align-items-center mb-1 cursor-pointer" onclick="filterByHealthList('${item.cat.name}')">
-                            <span class="fw-bold small ${isSelected ? 'text-primary' : 'text-dark'}">${item.cat.name}</span>
-                            <span class="small fw-bold ${textColor}">${Math.round(item.pct)}%</span>
-                        </div>
-                        <div class="progress mb-2" style="height: 6px;">
-                            <div class="progress-bar ${color}" style="width: ${Math.min(item.pct, 100)}%"></div>
-                        </div>
-                        <div class="d-flex justify-content-between align-items-center extra-small text-muted">
-                            <span onclick="filterByHealthList('${item.cat.name}')" style="cursor:pointer">
-                                Spent: $${item.actual.toLocaleString()}
-                                ${isOverBudget ? '<i class="bi bi-exclamation-circle-fill text-danger ms-1"></i>' : ''}
-                            </span>
-                            <div class="d-flex align-items-center gap-2">
-                                <span>Limit: $${item.budget.toLocaleString()}</span>
-
-                                <button class="btn btn-link p-0 text-primary" onclick="openBudgetModal(${item.cat.id}, ${item.budget})" title="Edit"><i class="bi bi-pencil-square"></i></button>
-
-                                ${isOverBudget ?
-                                    `<button class="btn btn-link p-0 text-success"
-                                        onclick="quickIncrease(${item.cat.id}, ${item.actual})"
-                                        title="Increase to nearest $1k">
-                                        <i class="bi bi-arrow-up-circle-fill"></i>
-                                     </button>`
-                                : ''}
-                            </div>
-                        </div>
-                    </div>`;
+                <div class="p-3 border-bottom cursor-pointer hover-bg-light" onclick="filterByHealthList('${cat.Name}')">
+                    <div class="d-flex justify-content-between small fw-bold">
+                        <span class="${state.selectedCategory === cat.Name ? 'text-primary' : ''}">${cat.Name}</span>
+                        <span>$${actual.toLocaleString()} (${Math.round(pct)}%)</span>
+                    </div>
+                    <div class="progress my-1" style="height:6px;"><div class="progress-bar ${color}" style="width:${Math.min(pct, 100)}%"></div></div>
+                    <div class="d-flex justify-content-between extra-small text-muted">
+                        <span>Limit: $${budget.toLocaleString()}</span>
+                        <i class="bi bi-pencil-square text-primary" onclick="event.stopPropagation(); openBudgetModal(${cat.Id}, ${budget}, false)"></i>
+                    </div>
+                </div>`;
             });
 
-            // Update Count
-            inactiveCountLabel.innerText = inactiveCount;
+            document.getElementById('unusedCount').innerText = unusedCount;
+            document.getElementById('monthTotalBudgetLabel').innerText = `$${totalB.toLocaleString()}`;
+            document.getElementById('overspentDetails').innerText = `${over} Overspent`;
+            document.getElementById('savingsDetails').innerText = `${under} Within Limits`;
         }
 
-        // ... [Include filterByHealthList, openBudgetModal, saveBudgetChange, filterAndRenderTable, etc. from previous response] ...
-
-        function filterByHealthList(catName) {
-            state.selectedCategory = (state.selectedCategory === catName) ? null : catName;
-            renderHealthList(state.currentMonthObj);
-            filterAndRenderTable();
+        // 1. Restore Action Functions
+        async function autoReallocate() {
+            if(!confirm("Reallocate unused funds to cover the worst deficit for this month?")) return;
+            const res = await fetch(`/Budget/AutoReallocate?month=${state.currentMonthObj.month}&year=${state.currentMonthObj.year}`, { method: 'POST' });
+            const json = await res.json();
+            alert(json.message); if(json.success) location.reload();
         }
 
-        function openBudgetModal(catId, currentAmount) {
+        async function smartIncrease() {
+            if(!confirm("Automatically increase all overspent categories to the nearest $1,000?")) return;
+            const res = await fetch(`/Budget/SmartIncreaseAll?month=${state.currentMonthObj.month}&year=${state.currentMonthObj.year}`, { method: 'POST' });
+            const json = await res.json();
+            alert(json.message); if(json.success) location.reload();
+        }
+
+        // 2. Updated Modal Handler (Handles Add vs Edit states)
+        function openBudgetModal(catId, currentAmount, isAdd = false) {
             const mObj = state.currentMonthObj;
-            if(!mObj) { alert("Please select a month first"); return; }
-            if(catId) document.getElementById('modalCatId').value = catId;
-            document.getElementById('modalAmount').value = currentAmount || 0;
+            const sel = document.getElementById('modalCatId');
+
+            sel.value = catId || "";
+            sel.disabled = !isAdd; // Lock category if editing
+            document.getElementById('modalSearchContainer').style.display = isAdd ? "" : "none";
+
+            document.getElementById('modalAmount').value = currentAmount;
             document.getElementById('modalMonth').value = mObj.month;
             document.getElementById('modalYear').value = mObj.year;
+
+            document.getElementById('modalTitle').innerText = isAdd ? "Set New Budget" : "Update Limit";
+
             new bootstrap.Modal(document.getElementById('editBudgetModal')).show();
         }
 
+        // 3. Search logic for modal
+        function filterModalSelect() {
+            const val = document.getElementById('modalSearch').value.toLowerCase();
+            const opts = document.getElementById('modalCatId').options;
+            for(let o of opts) {
+                o.style.display = o.text.toLowerCase().includes(val) ? "" : "none";
+            }
+        }
+
+        // 4. Table Sorting Logic
+        function sortTable(col) {
+            state.sortDir = (state.sortCol === col) ? state.sortDir * -1 : 1;
+            state.sortCol = col;
+            filterAndRenderTable();
+        }
+
+        // Update your existing filterAndRenderTable to support the sort
+        function filterAndRenderTable() {
+            const m = state.currentMonthObj;
+            let data = transactions.filter(t =>
+                new Date(t.Date).getMonth()+1 === m.month &&
+                new Date(t.Date).getFullYear() === m.year
+            );
+
+            if(state.selectedCategory) {
+                data = data.filter(t => t.CategoryName === state.selectedCategory);
+            }
+
+            state.tableData = data.sort((a,b) => {
+                let vA = a[state.sortCol], vB = b[state.sortCol];
+                if(state.sortCol === 'Date') { vA = new Date(vA); vB = new Date(vB); }
+                return (vA < vB ? -1 : 1) * state.sortDir;
+            });
+
+            state.currentPage = 1;
+            renderTablePage();
+        }
+
+        function renderTablePage() {
+            const start = (state.currentPage - 1) * state.pageSize;
+            const end = Math.min(start + state.pageSize, state.tableData.length);
+            document.getElementById('budgetLedgerBody').innerHTML = state.tableData.slice(start, end).map(t => `
+                <tr><td>${t.Date}</td><td>${t.Description}</td><td>${t.CategoryName}</td><td class="text-end fw-bold">$${t.Amount.toLocaleString()}</td></tr>
+            `).join('') || '<tr><td colspan="4" class="text-center p-4">No data</td></tr>';
+            document.getElementById('pageInfoLabel').innerText = `Showing ${state.tableData.length > 0 ? start+1 : 0}-${end} of ${state.tableData.length}`;
+        }
+
+        // Helper: Toggle Search in Modal
+        function filterModalSelect() {
+            const val = document.getElementById('modalSearch').value.toLowerCase();
+            const opts = document.getElementById('modalCatId').options;
+            for(let o of opts) o.style.display = o.text.toLowerCase().includes(val) ? "" : "none";
+        }
+
+        
+
+        // Core Functions
+        function backToTrend() { renderTrendChart(); }
+        function updateRange(r) { state.activeRange = r; renderTrendChart(); }
+        function enterMonthView(mObj) { state.currentMonthObj = mObj; if(state.isBreakdown) renderBreakdownChart(mObj); renderHealthList(mObj); filterAndRenderTable(); }
+        function filterByHealthList(n) { state.selectedCategory = (state.selectedCategory === n) ? null : n; filterAndRenderTable(); }
+        function clearTableFilters() { state.selectedCategory = null; filterAndRenderTable(); }
+        function changePage(dir) { if(state.currentPage + dir > 0) { state.currentPage += dir; renderTablePage(); } }
+        function changePageSize() { state.pageSize = parseInt(document.getElementById('pageSizeSelect').value); renderTablePage(); }
+        function getMonthRange() {
+            const range = [];
+            for (let i = state.activeRange - 1; i >= 0; i--) {
+                const d = new Date(latestDate.getFullYear(), latestDate.getMonth() - i, 1);
+                range.push({ month: d.getMonth() + 1, year: d.getFullYear(), label: d.toLocaleString('default', { month: 'short', year: '2-digit' }) });
+            }
+            return range;
+        }
+
         async function saveBudgetChange() {
-            const data = {
+            const payload = {
                 categoryId: document.getElementById('modalCatId').value,
                 amount: document.getElementById('modalAmount').value,
                 month: document.getElementById('modalMonth').value,
                 year: document.getElementById('modalYear').value
             };
-            try {
-                const res = await fetch('/Budget/UpdateBudget', { method: 'POST', headers: {'Content-Type': 'application/x-www-form-urlencoded'}, body: new URLSearchParams(data)});
-                const result = await res.json();
-                if (result.success) { bootstrap.Modal.getInstance(document.getElementById('editBudgetModal')).hide(); location.reload(); }
-                else { alert("Error: " + result.error); }
-            } catch (err) { alert("Network Error"); }
-        }
-
-        function filterAndRenderTable() {
-            const mObj = state.currentMonthObj;
-            if(!mObj) return;
-            let data = transactions.filter(t => {
-                const d = new Date(t.date);
-                return (d.getMonth() + 1) === mObj.month && d.getFullYear() === mObj.year;
-            });
-            if (state.selectedCategory) data = data.filter(t => t.parentCategoryName === state.selectedCategory);
-            data.sort((a,b) => new Date(b.date) - new Date(a.date));
-            state.tableData = data;
-            state.currentPage = 1;
-            renderTablePage();
-            const title = state.selectedCategory ? `${mObj.label} - ${state.selectedCategory}` : `${mObj.label} - All`;
-            document.getElementById('tableTitle').innerText = title;
-        }
-
-        function clearTableFilters() { state.selectedCategory = null; renderHealthList(state.currentMonthObj); filterAndRenderTable(); }
-        function changePageSize() { state.pageSize = parseInt(document.getElementById('rowsPerPageSelect').value); state.currentPage = 1; renderTablePage(); }
-        function changePage(dir) { const max = Math.ceil(state.tableData.length / state.pageSize); const next = state.currentPage + dir; if(next > 0 && next <= max) { state.currentPage = next; renderTablePage(); } }
-        function renderTablePage() {
-            const tbody = document.getElementById('budgetLedgerBody');
-            const data = state.tableData;
-            if (data.length === 0) { tbody.innerHTML = '<tr><td colspan="4" class="text-center text-muted p-4">No records found.</td></tr>'; document.getElementById('pageInfoLabel').innerText = "0 records"; return; }
-            const start = (state.currentPage - 1) * state.pageSize;
-            const end = Math.min(start + state.pageSize, data.length);
-            tbody.innerHTML = data.slice(start, end).map(t => `<tr><td>${new Date(t.date).toLocaleDateString()}</td><td class="text-truncate" style="max-width: 200px;" title="${t.description}">${t.description}</td><td><span class="badge bg-light text-dark border fw-normal">${t.parentCategoryName}</span></td><td class="text-end fw-bold text-dark">$${t.debit.toLocaleString()}</td></tr>`).join('');
-            document.getElementById('pageInfoLabel').innerText = `${start + 1}-${end} of ${data.length}`;
-            document.getElementById('btnPrev').parentElement.classList.toggle('disabled', state.currentPage === 1);
-            document.getElementById('btnNext').parentElement.classList.toggle('disabled', state.currentPage >= Math.ceil(data.length/state.pageSize));
-        }
-
-                async function autoReallocate() {
-            if(!state.currentMonthObj) return;
-            const m = state.currentMonthObj.month;
-            const y = state.currentMonthObj.year;
-
-            if(!confirm(`Auto-balance budgets for ${state.currentMonthObj.label}? This will move funds from your best saver to cover your worst overspend.`)) return;
-
-            try {
-                const res = await fetch(`/Budget/AutoReallocate?month=${m}&year=${y}`, { method: 'POST' });
-                const json = await res.json();
-                alert(json.message);
-                if(json.success) location.reload();
-            } catch(e) { alert("Error connecting to server."); }
-        }
-
-        async function quickIncrease(catId, currentSpent) {
-            if(!state.currentMonthObj) return;
-            const m = state.currentMonthObj.month;
-            const y = state.currentMonthObj.year;
-
-            try {
-                const formData = new URLSearchParams();
-                formData.append('categoryId', catId);
-                formData.append('month', m);
-                formData.append('year', y);
-                formData.append('currentSpent', currentSpent);
-
-                const res = await fetch('/Budget/QuickIncreaseBudget', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/x-www-form-urlencoded'},
-                    body: formData
-                });
-                const json = await res.json();
-                if(json.success) {
-                    location.reload();
-                } else {
-                    alert("Failed to update.");
-                }
-            } catch(e) { alert("Error connecting to server."); }
+            const res = await fetch('/Budget/UpdateBudget', { method: 'POST', headers: {'Content-Type': 'application/x-www-form-urlencoded'}, body: new URLSearchParams(payload)});
+            const result = await res.json();
+            if (result.success) location.reload(); else alert("Error: " + result.error);
         }
     </script>
 }

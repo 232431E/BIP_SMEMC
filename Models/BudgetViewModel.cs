@@ -1,4 +1,5 @@
 ﻿using System.Linq;
+using static BIP_SMEMC.Controllers.BudgetController;
 
 namespace BIP_SMEMC.Models
 {
@@ -6,6 +7,9 @@ namespace BIP_SMEMC.Models
     {
         // Top Section Data
         // This holds the filtered transaction list (Actuals)
+        public List<TransactionDTO> AllTransactionsDTO { get; set; } = new();
+        public List<CategoryDTO> ExpenseCategoriesDTO { get; set; } = new();
+        public List<BudgetDTO> BudgetsDTO { get; set; } = new(); // NEW
         public List<TransactionModel> AllTransactions { get; set; } = new();
 
         // This holds the Tier 1 categories (e.g., "Marketing", "Utilities")

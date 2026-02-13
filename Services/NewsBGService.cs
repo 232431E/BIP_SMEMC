@@ -7,47 +7,34 @@ namespace BIP_SMEMC.Services
 {
     public class NewsBGService : BackgroundService
     {
-        private readonly IServiceProvider _services;
+        private readonly IServiceScopeFactory _scopeFactory;
         private readonly HttpClient _http;
         private readonly IConfiguration _config;
 
-        public NewsBGService(IServiceProvider services, HttpClient http, IConfiguration config)
+        public NewsBGService(IServiceScopeFactory scopeFactory, HttpClient http, IConfiguration config)
         {
-            _services = services;
+            _scopeFactory = scopeFactory;
             _http = http;
             _config = config;
         }
-
+        // Controllers need this public method to manually trigger a refresh
         public async Task TriggerNewsCycle()
         {
-            using (var scope = _services.CreateScope())
+            using (var scope = _scopeFactory.CreateScope())
             {
                 var db = scope.ServiceProvider.GetRequiredService<Supabase.Client>();
                 var ai = scope.ServiceProvider.GetRequiredService<GeminiService>();
-                var seeder = scope.ServiceProvider.GetRequiredService<CategorySeederService>();
-
-                await seeder.EnsureIndustriesAndRegionsExist();
                 await RunDailyNewsCycle(db, ai);
             }
         }
 
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
         {
-            await Task.Delay(TimeSpan.FromMinutes(1), stoppingToken);
-
+            await Task.Delay(5000, stoppingToken);
             while (!stoppingToken.IsCancellationRequested)
             {
+                await Task.Delay(TimeSpan.FromHours(6), stoppingToken);
                 await TriggerNewsCycle();
-
-                // Run every 24 hours
-                var now = DateTime.UtcNow;
-                var nextRun = now.Date.AddDays(1).AddHours(4); // Run at 4 AM UTC
-                if (nextRun < now) nextRun = nextRun.AddDays(1);
-
-                var delay = nextRun - now;
-                Debug.WriteLine($"[NEWS BG] Next run in {delay.TotalHours:F1} hours");
-
-                await Task.Delay(delay, stoppingToken);
             }
         }
 
@@ -55,141 +42,81 @@ namespace BIP_SMEMC.Services
         {
             try
             {
-                Debug.WriteLine("--- [START] News Cycle Debugger ---");
+                Debug.WriteLine("--- [CHECKING] News Status for Today ---");
 
-                // 1. Fetch Source Data
-                var rawArticles = await FetchMultiSourceNews();
-                if (!rawArticles.Any())
+                // 1. Define "Today" range (UTC)
+                var todayStart = DateTime.UtcNow.Date.ToString("yyyy-MM-dd");
+
+                // 2. CHECK: Do we already have outlooks generated for today?
+                // If we have outlooks, we likely don't need to run the full cycle again.
+                var todayOutlooks = await db.From<NewsOutlookModel>()
+                    .Filter("date", Postgrest.Constants.Operator.Equals, todayStart)
+                    .Get();
+
+                if (todayOutlooks.Models.Any())
                 {
-                    Debug.WriteLine("[WARN] No articles found from any source.");
+                    Debug.WriteLine("[SKIP] Industry outlooks already exist for today. News cycle aborted.");
                     return;
                 }
 
-                // 2. Load Tags
-                var industries = (await db.From<IndustryModel>().Get()).Models;
-                var regions = (await db.From<RegionModel>().Get()).Models;
-
-                // 3. Tag Articles
-                var taggedArticles = LocalKeywordTagging(rawArticles, industries, regions);
-
-                // 4. CLEANUP: Delete old news
-                try
-                {
-                    var cutoffDate = DateTime.UtcNow.AddDays(-7).ToString("yyyy-MM-dd");
-                    await db.From<NewsArticleModel>().Filter("date", Postgrest.Constants.Operator.LessThan, cutoffDate).Delete();
-                    await db.From<NewsOutlookModel>().Filter("date", Postgrest.Constants.Operator.LessThan, cutoffDate).Delete();
-                }
-                catch (Exception ex) { Debug.WriteLine($"[CLEANUP WARN] {ex.Message}"); }
-
-                // 5. CRITICAL FIX: SAFE INSERT LOOP
-                // Instead of batch Upsert which fails on conflict if constraints aren't perfect,
-                // we check existence and insert only new ones.
-                var uniqueArticles = taggedArticles
-                    .GroupBy(x => x.Url)
-                    .Select(g => g.First())
-                    .ToList();
-
-                Debug.WriteLine($"[DB PRE-SAVE] Processing {uniqueArticles.Count} articles...");
-
-                int savedCount = 0;
-                foreach (var art in uniqueArticles)
-                {
-                    try
-                    {
-                        // 1. Check if URL exists
-                        var exists = await db.From<NewsArticleModel>()
-                            .Select("id") // Select minimal data
-                            .Filter("url", Postgrest.Constants.Operator.Equals, art.Url)
-                            .Get();
-
-                        if (exists.Models.Count == 0)
-                        {
-                            // 2. Insert if new
-                            await db.From<NewsArticleModel>().Insert(art);
-                            savedCount++;
-                            Debug.WriteLine($" -> Saved: {art.Title.Substring(0, Math.Min(20, art.Title.Length))}...");
-                        }
-                        else
-                        {
-                            Debug.WriteLine($" -> Skipped (Exists): {art.Title.Substring(0, Math.Min(20, art.Title.Length))}...");
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        // Log but continue loop so one bad apple doesn't kill the batch
-                        Debug.WriteLine($"[INSERT ERROR] {art.Url}: {ex.Message}");
-                    }
-                }
-
-                Debug.WriteLine($"[DB SUCCESS] Saved {savedCount} new articles.");
-                // 5. AI Generation (Using ALL recent news for context)
-                // We fetch the last 3 days of news from DB to ensure context is rich even if today's fetch was small
-                var contextNewsRes = await db.From<NewsArticleModel>()
-                    .Order("date", Postgrest.Constants.Ordering.Descending)
-                    .Limit(200)
+                // 3. CHECK: Do we have enough fresh news articles?
+                var todayArticles = await db.From<NewsArticleModel>()
+                    .Filter("date", Postgrest.Constants.Operator.Equals, todayStart)
                     .Get();
 
-                var contextNews = contextNewsRes.Models;
+                // If you have at least some articles but NO outlooks, you might want to 
+                // skip the FETCH step and just run the AI generation.
+                bool needFetch = todayArticles.Models.Count < 10; // Threshold: e.g., 10 articles
 
-                if (contextNews.Any())
+                if (!needFetch)
                 {
-                    // Inside RunDailyNewsCycle
+                    Debug.WriteLine("[INFO] Fresh articles found, skipping fetch and proceeding to AI generation.");
+                }
+                else
+                {
+                    // --- EXISTING FETCH & TAGGING LOGIC ---
+                    Debug.WriteLine("[PROCESS] Fetching new articles...");
+                    var rawArticles = await FetchMultiSourceNews();
+                    if (!rawArticles.Any()) return;
 
-                    // 6. AI Generation
-                    Debug.WriteLine("[AI] Starting Batch Outlook Generation...");
-                    var outlooks = await ai.GenerateIndustryOutlooks(
-                        contextNewsRes.Models,
-                        industries.Select(i => i.Name).ToList(),
-                        regions.Select(r => r.Name).ToList()
-                    );
+                    var industries = (await db.From<IndustryModel>().Get()).Models;
+                    var regions = (await db.From<RegionModel>().Get()).Models;
+                    var taggedArticles = LocalKeywordTagging(rawArticles, industries, regions);
 
-                    if (outlooks != null && outlooks.Any())
+                    foreach (var art in taggedArticles)
                     {
-                    try
-                        {
-                            var targetDate = DateTime.UtcNow.Date;
-                            var targetDateStr = targetDate.ToString("yyyy-MM-dd");
-
-                            // 1. Assign Date to models
-                            foreach (var o in outlooks) o.Date = targetDate;
-
-                            // 2. SAVE NEW VERSION (Append, do not delete today's data)
-                            // This creates multiple entries for the same day/industry/region if run multiple times.
-                            await db.From<NewsOutlookModel>().Insert(outlooks);
-                            Debug.WriteLine($"[AI SUCCESS] Saved {outlooks.Count} outlooks for {targetDateStr}.");
-
-                            // 3. RETENTION POLICY: Delete Outlooks older than 7 days
-                            var cutoffDate = targetDate.AddDays(-7).ToString("yyyy-MM-dd");
-
-                            await db.From<NewsOutlookModel>()
-                                .Filter("date", Postgrest.Constants.Operator.LessThan, cutoffDate)
-                                .Delete();
-
-                            Debug.WriteLine($"[DB CLEANUP] Deleted outlooks older than {cutoffDate}");
-
-                            // 4. RETENTION POLICY: News Articles
-                            await db.From<NewsArticleModel>()
-                                .Filter("date", Postgrest.Constants.Operator.LessThan, cutoffDate)
-                                .Delete();
-                        }
-                        catch (Exception dbEx)
-                        {
-                            Debug.WriteLine($"[DB SAVE ERROR] {dbEx.Message}");
-                        }
-                    }
-                    else
-                    {
-                        Debug.WriteLine("[AIWARN] Gemini returned 0 outlooks.");
+                        var exists = await db.From<NewsArticleModel>()
+                            .Filter("url", Postgrest.Constants.Operator.Equals, art.Url)
+                            .Get();
+                        if (exists.Models.Count == 0) await db.From<NewsArticleModel>().Insert(art);
                     }
                 }
+
+                // 4. GENERATE OUTLOOKS (Only if we reached this point)
+                var industriesList = (await db.From<IndustryModel>().Get()).Models;
+                var regionsList = (await db.From<RegionModel>().Get()).Models;
+
+                var context = (await db.From<NewsArticleModel>()
+                    .Order("date", Postgrest.Constants.Ordering.Descending)
+                    .Limit(50).Get()).Models;
+
+                Debug.WriteLine("[AI] Generating new industry outlooks...");
+                var newOutlooks = await ai.GenerateIndustryOutlooks(
+                    context,
+                    industriesList.Select(i => i.Name).ToList(),
+                    regionsList.Select(r => r.Name).ToList()
+                );
+
+                if (newOutlooks.Any()) await db.From<NewsOutlookModel>().Insert(newOutlooks);
+
+                Debug.WriteLine("--- [FINISHED] News Cycle ---");
             }
             catch (Exception ex)
             {
-                Debug.WriteLine($"[NEWS SERVICE ERROR] {ex.Message}");
-                if (ex.InnerException != null) Debug.WriteLine($"[INNER] {ex.InnerException.Message}");
+                Debug.WriteLine($"[NEWS BG ERROR] {ex.Message}");
             }
         }
-
+        
         private async Task<List<NewsArticleModel>> FetchMultiSourceNews()
         {
             var articles = new List<NewsArticleModel>();

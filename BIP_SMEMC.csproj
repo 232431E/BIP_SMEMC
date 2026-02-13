@@ -8,6 +8,7 @@
 
   <ItemGroup>
     <PackageReference Include="ClosedXML" Version="0.105.0" />
+    <PackageReference Include="Google.GenAI" Version="1.0.0" />
     <PackageReference Include="MailKit" Version="4.14.1" />
     <PackageReference Include="Microsoft.AspNetCore.Mvc.NewtonsoftJson" Version="8.0.0" />
     <PackageReference Include="Microsoft.VisualStudio.Web.CodeGeneration.Design" Version="8.0.22" />

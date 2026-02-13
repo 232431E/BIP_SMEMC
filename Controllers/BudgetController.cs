@@ -20,51 +20,90 @@ namespace BIP_SMEMC.Controllers
         {
             var userEmail = HttpContext.Session.GetString("UserEmail");
             if (string.IsNullOrEmpty(userEmail)) return RedirectToAction("Login", "Account");
+            try 
+            {
+                // 1. Get Data Range
+                var latestDate = await _financeService.GetLatestTransactionDate(userEmail);
+                var startDate = latestDate.AddMonths(-5);
 
-            // 1. Get Data Range
-            var latestDate = await _financeService.GetLatestTransactionDate(userEmail);
-            var startDate = latestDate.AddMonths(-5);
+                // 2. Fetch Data
+                var allTrans = await _financeService.GetUserTransactions(userEmail, startDate, latestDate);
+                var catRes = await _supabase.From<CategoryModel>().Get();
+                // Use standard Filter to avoid Logic Tree errors
+                var budgetRes = await _supabase.From<BudgetModel>()
+                    .Filter("user_id", Postgrest.Constants.Operator.Equals, userEmail)
+                    .Get();
+                // DEBUG LOGS
+                Debug.WriteLine($"[DEBUG] Transactions Count: {allTrans?.Count ?? 0}");
+                Debug.WriteLine($"[DEBUG] Categories Count: {catRes.Models?.Count ?? 0}");
+                Debug.WriteLine($"[DEBUG] Budgets Count: {budgetRes.Models?.Count ?? 0}");
 
-            // 2. Fetch Data
-            var allTrans = await _financeService.GetUserTransactions(userEmail, startDate, latestDate);
-            var catRes = await _supabase.From<CategoryModel>().Get();
-            var budgetRes = await _supabase.From<BudgetModel>().Where(b => b.UserId == userEmail).Get();
+                // 3. Map Categories
+                var expenseRoot = catRes.Models.FirstOrDefault(c => c.Name.Equals("Expense", StringComparison.OrdinalIgnoreCase));
+                if (expenseRoot == null) Debug.WriteLine("[DEBUG ERROR] Root 'Expense' category not found!");
 
-            // 3. Map Categories
-            var expenseRoot = catRes.Models.FirstOrDefault(c => c.Name.Equals("Expense", StringComparison.OrdinalIgnoreCase));
-
-            var processedExpenses = allTrans
+                var processedExpenses = allTrans
                 .Where(t => t.Debit > 0)
                 .Select(t => {
                     var leaf = catRes.Models.FirstOrDefault(c => c.Id == t.CategoryId);
                     var t1 = leaf;
-                    while (t1 != null && t1.ParentId != expenseRoot?.Id && t1.ParentId != 0)
+                    int safety = 0;
+                    while (t1 != null && t1.ParentId != expenseRoot?.Id && t1.ParentId != 0 && safety < 10)
+                    {
                         t1 = catRes.Models.FirstOrDefault(c => c.Id == t1.ParentId);
-
+                        safety++;
+                    }
                     t.ParentCategoryName = t1?.Name ?? "General Expense";
                     return t;
                 }).ToList();
 
-            var model = new BudgetViewModel
-            {
-                AllTransactions = processedExpenses,
-                // Only pass Tier 1 categories for the Budget dropdown
-                ExpenseCategories = catRes.Models.Where(c => c.ParentId == expenseRoot?.Id).ToList(),
-                BudgetRecords = budgetRes.Models,
-                LatestDataDate = latestDate
-            };
+                Debug.WriteLine($"[DEBUG] Processed Expenses: {processedExpenses.Count}");
+                // Inside BudgetController.cs
+                var model = new BudgetViewModel
+                {
 
-            return View(model);
+                    AllTransactionsDTO = processedExpenses.Select(t => new TransactionDTO
+                    {
+                        Date = t.Date.ToString("yyyy-MM-dd"),
+                        Description = t.Description ?? "",
+                        Amount = t.Debit,
+                        CategoryName = t.ParentCategoryName
+                    }).ToList(),
+
+                    ExpenseCategoriesDTO = catRes.Models
+                .Where(c => c.ParentId == expenseRoot?.Id)
+                .Select(c => new CategoryDTO { Id = c.Id ?? 0, Name = c.Name })
+                .ToList(),
+
+                    // This is critical for the JS Health list to display data
+                    BudgetsDTO = budgetRes.Models.Select(b => new BudgetDTO
+                    {
+                        CategoryId = b.CategoryId,
+                        BudgetAmount = b.BudgetAmount,
+                        Month = b.Month,
+                        Year = b.Year
+                    }).ToList(),
+
+                    LatestDataDate = latestDate
+                };
+                Debug.WriteLine($"[FINAL CHECK] Model has {model.AllTransactionsDTO.Count} DTOs");
+                return View(model);
+            }
+                catch (Exception ex) {
+                Debug.WriteLine($"[FATAL INDEX ERROR] {ex.Message} \n {ex.StackTrace}");
+                return Content($"Error: {ex.Message}");
+            }
         }
 
         [HttpPost]
         public async Task<IActionResult> UpdateBudget(int categoryId, decimal amount, int month, int year)
         {
             var userEmail = HttpContext.Session.GetString("UserEmail");
-            if (string.IsNullOrEmpty(userEmail)) return RedirectToAction("Login", "Account");
+            if (string.IsNullOrEmpty(userEmail)) return Unauthorized();
+
             try
             {
-                // Check if a specific budget override already exists for this Month/Year
+                // Use clean Filter chain to avoid PGRST100 Logic Tree error
                 var existing = await _supabase.From<BudgetModel>()
                     .Filter("user_id", Postgrest.Constants.Operator.Equals, userEmail)
                     .Filter("category_id", Postgrest.Constants.Operator.Equals, categoryId)
@@ -76,24 +115,22 @@ namespace BIP_SMEMC.Controllers
 
                 if (record != null)
                 {
-                    // Update existing override
                     record.BudgetAmount = amount;
                     await record.Update<BudgetModel>();
                 }
                 else
                 {
-                    // Create new override
                     var newBudget = new BudgetModel
                     {
                         UserId = userEmail,
                         CategoryId = categoryId,
                         Month = month,
                         Year = year,
-                        BudgetAmount = amount
+                        BudgetAmount = amount,
+                        CreatedAt = DateTime.UtcNow
                     };
                     await _supabase.From<BudgetModel>().Insert(newBudget);
                 }
-
                 return Json(new { success = true });
             }
             catch (Exception ex)
@@ -101,109 +138,203 @@ namespace BIP_SMEMC.Controllers
                 return Json(new { success = false, error = ex.Message });
             }
         }
-
-        // [POST] Auto Reallocate: Finds worst offender and moves budget from best saver
+        // [POST] Auto Reallocate: Pools ALL excess and moves to BIGGEST deficit
         [HttpPost]
         public async Task<IActionResult> AutoReallocate(int month, int year)
         {
+            Debug.WriteLine($"[AUTO-REALLOCATE] Started for {month}/{year}");
             var userEmail = HttpContext.Session.GetString("UserEmail");
             if (string.IsNullOrEmpty(userEmail)) return Json(new { success = false, message = "Session expired" });
 
-            // 1. Fetch Budget & Actuals
-            var budgetRes = await _supabase.From<BudgetModel>()
-                .Where(b => b.UserId == userEmail && b.Month == month && b.Year == year)
-                .Get();
-
-            // We need actuals to know who is over/under
-            var transactions = await _financeService.GetUserTransactions(userEmail,
-                new DateTime(year, month, 1),
-                new DateTime(year, month, DateTime.DaysInMonth(year, month)));
-
-            var budgets = budgetRes.Models;
-            var varianceList = new List<(BudgetModel Budget, decimal Actual, decimal Variance)>();
-
-            foreach (var b in budgets)
+            try
             {
-                decimal actual = transactions.Where(t => t.CategoryId == b.CategoryId).Sum(t => t.Debit);
-                decimal variance = b.BudgetAmount - actual; // Negative means overspent
-                varianceList.Add((b, actual, variance));
+                // 1. Fetch Existing Budgets
+                // FIX: Use .Filter with string-formatted date to avoid logic tree error
+                var budgetRes = await _supabase.From<BudgetModel>()
+                    .Filter("user_id", Postgrest.Constants.Operator.Equals, userEmail)
+                    .Filter("month", Postgrest.Constants.Operator.Equals, month)
+                    .Filter("year", Postgrest.Constants.Operator.Equals, year)
+                    .Get();
+
+                var budgets = budgetRes.Models;
+                if (!budgets.Any())
+                {
+                    Debug.WriteLine("[AUTO-REALLOCATE] No budgets found.");
+                    return Json(new { success = false, message = "No budgets set for this month yet." });
+                }
+                // 2. Fetch Actuals
+                var start = new DateTime(year, month, 1);
+                var end = start.AddMonths(1).AddDays(-1);
+                var transactions = await _financeService.GetUserTransactions(userEmail, start, end);
+
+                // Fetch Categories for Naming
+                var categories = (await _supabase.From<CategoryModel>().Get()).Models;
+                var expenseRoot = categories.FirstOrDefault(c => c.Name == "Expense");
+
+                // Helper to map transaction to Parent Category ID
+                int GetParentCatId(int? leafId)
+                {
+                    if (!leafId.HasValue) return 0;
+                    var leaf = categories.FirstOrDefault(c => c.Id == leafId);
+                    while (leaf != null && leaf.ParentId != expenseRoot?.Id && leaf.ParentId != 0)
+                        leaf = categories.FirstOrDefault(c => c.Id == leaf.ParentId);
+                    return leaf?.Id ?? 0;
+                }
+
+                // 3. Logic: Pool Excess & Find Worst Offender
+                decimal totalPool = 0;
+                BudgetModel worstOffender = null;
+                decimal maxDeficit = 0;
+                var updates = new List<BudgetModel>();
+
+                Debug.WriteLine("[AUTO-REALLOCATE] Analyzing Categories...");
+
+                foreach (var b in budgets) //under budget
+                {
+                    // IMPORTANT: Ensure you are calculating the actual spend for the CORRECT CategoryId
+                    decimal actual = transactions.Where(t => GetParentCatId(t.CategoryId) == b.CategoryId).Sum(t => t.Debit);
+                    decimal variance = b.BudgetAmount - actual; 
+                    Debug.WriteLine($" - Cat {b.CategoryId}: Budget {b.BudgetAmount}, Actual {actual}, Var {variance}");
+                    if (variance > 0)
+                    {
+                        decimal newLimit = Math.Ceiling(actual * 1.05m);
+                        totalPool += (b.BudgetAmount - newLimit);
+                        b.BudgetAmount = newLimit;
+                        updates.Add(b);
+                    }
+                    else if (variance < 0) //overbudget
+                    {
+                        decimal deficit = Math.Abs(variance);
+                        if (deficit > maxDeficit)
+                        {
+                            maxDeficit = deficit;
+                            worstOffender = b;
+                        }
+                    }
+                }
+
+                Debug.WriteLine($"[AUTO-REALLOCATE] Pool: {totalPool:C}, Worst Deficit: {maxDeficit:C}");
+
+                if (worstOffender != null && totalPool > 0)
+                {
+                    worstOffender.BudgetAmount += totalPool;
+                    if (!updates.Any(u => u.Id == worstOffender.Id)) updates.Add(worstOffender);
+
+                    Debug.WriteLine($"[POOL] Moving {totalPool:C} to cover {worstOffender.CategoryId}");
+                    await _supabase.From<BudgetModel>().Upsert(updates);
+
+                    string worstName = categories.FirstOrDefault(c => c.Id == worstOffender.CategoryId)?.Name ?? "Unknown";
+                    return Json(new { success = true, message = $"Moved {totalPool:C} to cover '{worstName}'." });
+                }
+                return Json(new { success = false, message = "No deficit found or no surplus available to move." });
             }
-
-            // 2. Identify Candidates
-            var worstOffender = varianceList.OrderBy(v => v.Variance).FirstOrDefault(); // Most negative
-            var bestSaver = varianceList.OrderByDescending(v => v.Variance).FirstOrDefault(); // Most positive
-
-            if (worstOffender.Budget == null || bestSaver.Budget == null)
-                return Json(new { success = false, message = "Not enough budget data." });
-
-            if (worstOffender.Variance >= 0)
-                return Json(new { success = false, message = "Good news! No categories are over budget." });
-
-            if (bestSaver.Variance <= 0)
-                return Json(new { success = false, message = "No categories have surplus to reallocate." });
-
-            // 3. Calculate Transfer Amount
-            decimal needed = Math.Abs(worstOffender.Variance);
-            decimal available = bestSaver.Variance;
-            decimal transferAmount = Math.Min(needed, available);
-
-            // 4. Update DB (Batch Logic via Loop for safety)
-            worstOffender.Budget.BudgetAmount += transferAmount;
-            bestSaver.Budget.BudgetAmount -= transferAmount;
-
-            await worstOffender.Budget.Update<BudgetModel>();
-            await bestSaver.Budget.Update<BudgetModel>();
-
-            // 5. Fetch Category Names for Message
-            var cats = (await _supabase.From<CategoryModel>().Get()).Models;
-            string fromName = cats.FirstOrDefault(c => c.Id == bestSaver.Budget.CategoryId)?.Name ?? "Saver";
-            string toName = cats.FirstOrDefault(c => c.Id == worstOffender.Budget.CategoryId)?.Name ?? "Spender";
-
-            return Json(new
+            catch (Exception ex)
             {
-                success = true,
-                message = $"Reallocated ${transferAmount:N0} from {fromName} to {toName}."
-            });
+                Debug.WriteLine($"[AUTO-REALLOCATE FATAL] {ex.Message}");
+                return Json(new { success = false, message = "Error: " + ex.Message });
+            }
         }
-
-        // [POST] Quick Increase: Rounds up to next 1000
+        // [POST] Smart Increase: Increase ALL overspent budgets to nearest 1000
         [HttpPost]
-        public async Task<IActionResult> QuickIncreaseBudget(int categoryId, int month, int year, decimal currentSpent)
+        public async Task<IActionResult> SmartIncreaseAll(int month, int year)
         {
+            Debug.WriteLine($"[SMART INCREASE] Started for {month}/{year}");
             var userEmail = HttpContext.Session.GetString("UserEmail");
             if (string.IsNullOrEmpty(userEmail)) return Json(new { success = false });
 
-            // Logic: If spent is 1200, target is 2000. If 800, target 1000.
-            decimal newTarget = Math.Ceiling(currentSpent / 1000m) * 1000;
-            if (newTarget == currentSpent) newTarget += 1000; // Ensure it's always an increase if exactly on 1000
-
-            // Check if record exists
-            var existing = await _supabase.From<BudgetModel>()
-                .Where(b => b.UserId == userEmail && b.CategoryId == categoryId && b.Month == month && b.Year == year)
-                .Get();
-
-            var record = existing.Models.FirstOrDefault();
-
-            if (record != null)
+            try
             {
-                record.BudgetAmount = newTarget;
-                await record.Update<BudgetModel>();
-            }
-            else
-            {
-                var newBudget = new BudgetModel
+                var start = new DateTime(year, month, 1);
+                var end = start.AddMonths(1).AddDays(-1);
+                var transactions = await _financeService.GetUserTransactions(userEmail, start, end);
+                var categories = (await _supabase.From<CategoryModel>().Get()).Models;
+                var expenseRoot = categories.FirstOrDefault(c => c.Name == "Expense");
+
+                // Fetch existing budgets
+                // FIX: Use explicit Filters to avoid PGRST100 Logic Tree error
+                var budgetRes = await _supabase.From<BudgetModel>()
+                    .Filter("user_id", Postgrest.Constants.Operator.Equals, userEmail)
+                    .Filter("month", Postgrest.Constants.Operator.Equals, month)
+                    .Filter("year", Postgrest.Constants.Operator.Equals, year)
+                    .Get();
+
+                var budgets = budgetRes.Models;
+
+                var tier1Cats = categories.Where(c => c.ParentId == expenseRoot?.Id).ToList();
+                int count = 0;
+
+                foreach (var cat in tier1Cats)
                 {
-                    UserId = userEmail,
-                    CategoryId = categoryId,
-                    Month = month,
-                    Year = year,
-                    BudgetAmount = newTarget,
-                    CreatedAt = DateTime.UtcNow
-                };
-                await _supabase.From<BudgetModel>().Insert(newBudget);
-            }
+                    decimal actual = 0;
+                    foreach (var t in transactions)
+                    {
+                        var leaf = categories.FirstOrDefault(c => c.Id == t.CategoryId);
+                        while (leaf != null && leaf.ParentId != expenseRoot?.Id && leaf.ParentId != 0)
+                            leaf = categories.FirstOrDefault(c => c.Id == leaf.ParentId);
 
-            return Json(new { success = true });
+                        if (leaf != null && leaf.Id == cat.Id) actual += t.Debit;
+                    }
+
+                    var existingBudget = budgets.FirstOrDefault(b => b.CategoryId == cat.Id);
+                    decimal currentLimit = existingBudget?.BudgetAmount ?? 0;
+
+                    if (actual > currentLimit)
+                    {
+                        decimal newTarget = Math.Ceiling(actual / 1000m) * 1000;
+                        if (newTarget <= actual) newTarget += 1000;
+
+                        if (existingBudget != null)
+                        {
+                            // UPDATE existing
+                            existingBudget.BudgetAmount = newTarget;
+                            await existingBudget.Update<BudgetModel>();
+                        }
+                        else
+                        {
+                            // INSERT new
+                            var newBudget = new BudgetModel
+                            {
+                                UserId = userEmail,
+                                CategoryId = cat.Id ?? 0,
+                                Month = month,
+                                Year = year,
+                                BudgetAmount = newTarget,
+                                CreatedAt = DateTime.UtcNow
+                            };
+                            await _supabase.From<BudgetModel>().Insert(newBudget);
+                        }
+                        count++;
+                    }
+                }
+
+                return Json(new { success = true, message = $"Updated {count} categories." });
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"[INCREASE ERROR] {ex.Message}");
+                return Json(new { success = false, message = ex.Message });
+            }
+        }
+        public class TransactionDTO
+        {
+            public string Date { get; set; }
+            public string Description { get; set; }
+            public decimal Amount { get; set; }
+            public string CategoryName { get; set; }
+        }
+
+        public class CategoryDTO
+        {
+            public int Id { get; set; }
+            public string Name { get; set; }
+        }
+        // Add this class inside the Controller or Models folder
+        public class BudgetDTO
+        {
+            public int CategoryId { get; set; }
+            public decimal BudgetAmount { get; set; }
+            public int Month { get; set; }
+            public int Year { get; set; }
         }
     }
 }
