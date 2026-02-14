@@ -3,15 +3,38 @@
 @{
     ViewData["Title"] = "Community";
     var profile = Model.Profile ?? new BIP_SMEMC.Models.CommunityProfile();
-    var discussionCount = Model.Threads?.Count ?? 0;
-    var eventCount = profile.EventsRsvpedCount;
+    var discussionCount = profile.DiscussionsCount;
+    var eventCount = Model.Events?.Count(e => e.IsRegistered) ?? profile.EventsRsvpedCount;
     var resourceCount = profile.ResourcesDownloadedCount;
     var badgeCount = profile.BadgesEarnedCount;
     var activeTab = (ViewData["ActiveTab"] as string ?? "discussions").ToLowerInvariant();
+    var rewardPoints = (ViewData["RewardPoints"] as int?) ?? profile.ReputationPoints;
     var discussionsActive = activeTab == "discussions";
     var eventsActive = activeTab == "events";
     var resourcesActive = activeTab == "resources";
     var badgesActive = activeTab == "badges";
+
+    string GetProgressTrack(BIP_SMEMC.Models.CommunityBadge badge)
+    {
+        var text = $"{badge.Title} {badge.Description}".ToLowerInvariant();
+        if (text.Contains("module")) return "learning-modules";
+        if (text.Contains("quiz")) return "learning-quiz";
+        if (text.Contains("thread") || text.Contains("discussion")) return "community-discussions";
+        if (text.Contains("reply")) return "community-replies";
+        if (text.Contains("event") || text.Contains("rsvp")) return "community-events";
+        if (text.Contains("resource") || text.Contains("download")) return "community-resources";
+        if (text.Contains("point") || text.Contains("reputation")) return "points";
+        return "general";
+    }
+
+    var visibleProgressBadges = (Model.BadgesInProgress ?? new List<BIP_SMEMC.Models.CommunityBadge>())
+        .OrderBy(b => b.ProgressTarget ?? int.MaxValue)
+        .ThenBy(b => b.ProgressCurrent ?? 0)
+        .ThenBy(b => b.Points)
+        .ThenBy(b => b.Id)
+        .GroupBy(GetProgressTrack)
+        .Select(g => g.First())
+        .ToList();
 }
 
 <div class="mb-4">
@@ -21,17 +44,20 @@
             <div class="text-muted">Connect, learn, and grow with fellow entrepreneurs</div>
         </div>
 
-        <div class="card shadow-sm community-reputation">
-            <div class="card-body d-flex align-items-center justify-content-between">
-                <div class="me-3">
-                    <div class="text-muted small">Reputation Points</div>
-                    <div class="fs-3 fw-bold">@profile.ReputationPoints</div>
-                </div>
-                <div class="fs-1 text-warning">
-                    <i class="bi bi-trophy"></i>
+        <a asp-controller="Rewards" asp-action="Index" class="text-decoration-none text-reset d-block">
+            <div class="card shadow-sm community-reputation">
+                <div class="card-body d-flex align-items-center justify-content-between">
+                    <div class="me-3">
+                        <div class="text-muted small">Total Points</div>
+                        <div class="fs-3 fw-bold">@rewardPoints</div>
+                        <div class="text-muted small">Expires: @DateTime.Now.AddYears(2).ToShortDateString()</div>
+                    </div>
+                    <div class="fs-1 text-warning">
+                        <i class="bi bi-trophy"></i>
+                    </div>
                 </div>
             </div>
-        </div>
+        </a>
     </div>
 </div>
 
@@ -67,7 +93,7 @@
                     <i class="bi bi-download"></i>
                     <div class="fw-semibold">My Resources</div>
                 </div>
-                <div class="fs-3 fw-bold">@resourceCount</div>
+                <div class="fs-3 fw-bold" id="myResourcesCount">@resourceCount</div>
                 <div class="text-muted small">Downloaded</div>
             </div>
         </div>
@@ -79,7 +105,7 @@
                     <i class="bi bi-award"></i>
                     <div class="fw-semibold">My Badges</div>
                 </div>
-                <div class="fs-3 fw-bold">@badgeCount</div>
+                <div class="fs-3 fw-bold" id="myBadgesCount">@badgeCount</div>
                 <div class="text-muted small">Earned badges</div>
             </div>
         </div>
@@ -130,6 +156,7 @@
         <div id="threadList">
             @await Html.PartialAsync("_ThreadList", Model.Threads)
         </div>
+        <div id="threadPager" class="d-flex gap-2 justify-content-center mt-3"></div>
     </div>
 
     <div class="tab-pane fade @(eventsActive ? "show active" : "")" id="panel-events" role="tabpanel">
@@ -140,16 +167,13 @@
             </div>
         </div>
 
-        <div class="row g-3">
+        <div class="row g-3" id="eventsList">
             @foreach (var ev in Model.Events)
             {
                 var badgeClass = ev.IsRegistered ? "bg-success-subtle text-success" : "bg-light text-muted";
                 var cardClass = ev.IsRegistered ? "community-event-card registered" : "community-event-card";
-                var actionLabel = string.IsNullOrWhiteSpace(ev.ActionLabel)
-                    ? (ev.IsRegistered ? "Cancel RSVP" : "RSVP")
-                    : ev.ActionLabel;
 
-                <div class="col-lg-6">
+                <div class="col-lg-6 paginate-item">
                     <div class="card shadow-sm h-100 @cardClass">
                         <div class="card-body">
                             <div class="d-flex flex-wrap gap-2 mb-2">
@@ -179,12 +203,22 @@
                                         @{
                                             var pct = ev.SeatsTotal == 0 ? 0 : (int)Math.Round(ev.SeatsBooked * 100.0 / ev.SeatsTotal);
                                         }
-                                        <div class="progress-bar" role="progressbar" style="width: @pct%"></div>
+                                    <div class="progress-bar event-progress" data-event-id="@ev.Id" role="progressbar" style="width: @pct%"></div>
                                     </div>
-                                    <div class="text-muted small mt-1">@ev.SeatsBooked / @ev.SeatsTotal seats booked</div>
+                                    <div class="text-muted small mt-1"><span class="event-seat-text" data-event-id="@ev.Id">@ev.SeatsBooked / @ev.SeatsTotal seats booked</span></div>
                                 </div>
                                 <div class="ms-auto">
-                                    <button class="btn @(ev.IsRegistered ? "btn-outline-dark" : "btn-dark") btn-sm">@actionLabel</button>
+                                    @if (ev.IsRegistered)
+                                    {
+                                        <div class="d-flex gap-2">
+                                            <button class="btn btn-outline-dark btn-sm event-details-btn" data-event-id="@ev.Id">Details</button>
+                                            <button class="btn btn-dark btn-sm event-cancel-btn" data-event-id="@ev.Id">Cancel RSVP</button>
+                                        </div>
+                                    }
+                                    else
+                                    {
+                                        <button class="btn btn-dark btn-sm event-rsvp-btn" data-event-id="@ev.Id">RSVP</button>
+                                    }
                                 </div>
                             </div>
                         </div>
@@ -192,6 +226,7 @@
                 </div>
             }
         </div>
+        <div id="eventsPager" class="d-flex gap-2 justify-content-center mt-3"></div>
     </div>
 
     <div class="tab-pane fade @(resourcesActive ? "show active" : "")" id="panel-resources" role="tabpanel">
@@ -205,10 +240,11 @@
             </button>
         </div>
 
-        <div class="row g-3">
+        <div class="row g-3" id="resourcesList">
             @foreach (var res in Model.Resources)
             {
-                <div class="col-lg-6">
+                var downloadedByUser = Model.DownloadedResourceIds.Contains(res.Id);
+                <div class="col-lg-6 paginate-item">
                     <div class="card shadow-sm h-100 community-resource-card">
                         <div class="card-body">
                             <div class="d-flex flex-wrap gap-2 mb-2">
@@ -220,26 +256,21 @@
                             <div class="text-muted small mb-3">@res.Summary</div>
                             <div class="d-flex align-items-center justify-content-between">
                                 <div class="text-muted small">
-                                    <i class="bi bi-download me-1"></i>@res.DownloadCount downloads
+                                    <i class="bi bi-download me-1"></i><span class="resource-download-count" data-resource-id="@res.Id">@res.DownloadCount</span> downloads
                                 </div>
-                                @if (!string.IsNullOrWhiteSpace(res.FileUrl))
-                                {
-                                    <a class="btn btn-dark btn-sm" href="@res.FileUrl" target="_blank" rel="noopener">
-                                        <i class="bi bi-download me-1"></i> Download (+@res.PointsReward pts)
-                                    </a>
-                                }
-                                else
-                                {
-                                    <button class="btn btn-dark btn-sm" disabled>
-                                        <i class="bi bi-download me-1"></i> Download (+@res.PointsReward pts)
-                                    </button>
-                                }
+                                <a class="btn btn-dark btn-sm resource-download-btn"
+                                   href="@Url.Action("DownloadResource", "Community", new { id = res.Id })"
+                                   data-resource-id="@res.Id">
+                                    <i class="bi bi-download me-1"></i>
+                                    @(downloadedByUser ? "Download Again" : $"Download (+{res.PointsReward} pts)")
+                                </a>
                             </div>
                         </div>
                     </div>
                 </div>
             }
         </div>
+        <div id="resourcesPager" class="d-flex gap-2 justify-content-center mt-3"></div>
     </div>
 
     <div class="tab-pane fade @(badgesActive ? "show active" : "")" id="panel-badges" role="tabpanel">
@@ -253,10 +284,10 @@
             </div>
         </div>
 
-        <div class="row g-3 mb-4">
+        <div class="row g-3 mb-4" id="earnedBadgesList">
             @foreach (var badge in Model.BadgesEarned)
             {
-                <div class="col-lg-6">
+                <div class="col-lg-6 paginate-item" data-earned-badge-title="@badge.Title">
                     <div class="card shadow-sm h-100 badge-earned">
                         <div class="card-body d-flex align-items-center justify-content-between">
                             <div class="d-flex align-items-center gap-3">
@@ -278,6 +309,7 @@
                 </div>
             }
         </div>
+        <div id="earnedBadgesPager" class="d-flex gap-2 justify-content-center mb-4"></div>
 
         <div class="community-section mb-3">
             <div class="d-flex align-items-start gap-2">
@@ -289,10 +321,10 @@
             </div>
         </div>
 
-        <div class="row g-3">
-            @foreach (var badge in Model.BadgesInProgress)
+        <div class="row g-3" id="progressBadgesList">
+            @foreach (var badge in visibleProgressBadges)
             {
-                <div class="col-12">
+                <div class="col-12 paginate-item" data-progress-badge-title="@badge.Title">
                     <div class="card shadow-sm">
                         <div class="card-body">
                             <div class="d-flex justify-content-between align-items-center mb-1">
@@ -304,16 +336,50 @@
                             </div>
                             <div class="text-muted small mb-3">@badge.Description</div>
                             <div class="progress community-progress-bar">
-                                <div class="progress-bar" role="progressbar" style="width: @(badge.ProgressPercent ?? 0)%"></div>
+                                <div class="progress-bar" role="progressbar" data-progress-bar="@badge.Title" style="width: @(badge.ProgressPercent ?? 0)%"></div>
                             </div>
                             <div class="d-flex justify-content-between text-muted small mt-2">
-                                <span>@(badge.ProgressPercent ?? 0)% complete</span>
-                                <span>@(badge.ProgressCurrent ?? 0) / @(badge.ProgressTarget ?? 0)</span>
+                                <span data-progress-text="@badge.Title">@(badge.ProgressPercent ?? 0)% complete</span>
+                                <span data-progress-ratio="@badge.Title">@(badge.ProgressCurrent ?? 0) / @(badge.ProgressTarget ?? 0)</span>
                             </div>
                         </div>
                     </div>
                 </div>
             }
+        </div>
+        <div id="progressBadgesPager" class="d-flex gap-2 justify-content-center mt-3"></div>
+    </div>
+</div>
+
+<div class="modal fade" id="rsvpConfirmModal" tabindex="-1" aria-labelledby="rsvpConfirmLabel" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header border-0">
+                <h5 class="modal-title" id="rsvpConfirmLabel">RSVP Confirmed</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body pt-0">
+                <div class="text-center mb-3">
+                    <i class="bi bi-check-circle-fill text-success fs-1"></i>
+                    <div class="text-muted small mt-2">Your seat has been reserved.</div>
+                </div>
+
+                <div class="card bg-light border-0 mb-3">
+                    <div class="card-body">
+                        <div class="fw-semibold mb-2" id="rsvpEventTitle">-</div>
+                        <div class="small text-muted mb-1"><i class="bi bi-calendar-event me-2"></i><span id="rsvpEventDateTime">-</span></div>
+                        <div class="small text-muted mb-1"><i class="bi bi-geo-alt me-2"></i><span id="rsvpEventLocation">-</span></div>
+                        <div class="small text-muted"><i class="bi bi-person me-2"></i><span id="rsvpEventSpeaker">-</span></div>
+                    </div>
+                </div>
+
+                <div class="alert alert-primary py-2 mb-0">
+                    Reminder is set. You will receive a notification before the event starts.
+                </div>
+            </div>
+            <div class="modal-footer border-0">
+                <button type="button" class="btn btn-dark" data-bs-dismiss="modal">Got it</button>
+            </div>
         </div>
     </div>
 </div>
@@ -372,6 +438,78 @@
         const threadList = document.getElementById("threadList");
         let timeout = null;
 
+        (function ensureRequestedTabIsActive() {
+            const params = new URLSearchParams(window.location.search);
+            const tab = (params.get("tab") || "").toLowerCase();
+            if (!tab) return;
+            const btn = document.getElementById(`tab-${tab}`);
+            if (!btn) return;
+            const bsTab = new bootstrap.Tab(btn);
+            bsTab.show();
+        })();
+
+        const pagerState = new Map();
+
+        function paginate(containerSelector, itemSelector, pagerSelector, pageSize) {
+            const container = document.querySelector(containerSelector);
+            const pager = document.querySelector(pagerSelector);
+            if (!container || !pager) return;
+
+            const directItems = Array.from(container.children).filter(el => el.matches(itemSelector));
+            const items = directItems.length > 0
+                ? directItems
+                : Array.from(container.querySelectorAll(itemSelector));
+            if (items.length === 0) {
+                pager.innerHTML = "";
+                return;
+            }
+
+            const pages = Math.ceil(items.length / pageSize);
+            let current = pagerState.get(pagerSelector) || 1;
+            if (current > pages) current = 1;
+
+            const render = () => {
+                items.forEach((el, i) => {
+                    const show = i >= (current - 1) * pageSize && i < current * pageSize;
+                    el.style.display = show ? "" : "none";
+                    el.classList.toggle("d-none", !show);
+                    el.setAttribute("aria-hidden", show ? "false" : "true");
+                });
+
+                if (pages <= 1) {
+                    pager.innerHTML = "";
+                    return;
+                }
+
+                pager.innerHTML = "";
+                for (let p = 1; p <= pages; p++) {
+                    const btn = document.createElement("button");
+                    btn.type = "button";
+                    btn.className = `btn btn-sm ${p === current ? "btn-dark" : "btn-outline-secondary"}`;
+                    btn.textContent = p;
+                    btn.addEventListener("click", (e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        current = p;
+                        pagerState.set(pagerSelector, current);
+                        render();
+                        container.scrollIntoView({ behavior: "smooth", block: "start" });
+                    });
+                    pager.appendChild(btn);
+                }
+            };
+
+            render();
+        }
+
+        function applyCommunityPagination() {
+            paginate("#threadList", ".paginate-item", "#threadPager", 6);
+            paginate("#eventsList", ".paginate-item", "#eventsPager", 6);
+            paginate("#resourcesList", ".paginate-item", "#resourcesPager", 6);
+            paginate("#earnedBadgesList", ".paginate-item", "#earnedBadgesPager", 6);
+            paginate("#progressBadgesList", ".paginate-item", "#progressBadgesPager", 5);
+        }
+
         if (searchBox) {
             searchBox.addEventListener("input", () => {
                 clearTimeout(timeout);
@@ -381,10 +519,13 @@
                         .then(res => res.text())
                         .then(html => {
                             threadList.innerHTML = html;
+                            paginate("#threadList", ".paginate-item", "#threadPager", 6);
                         });
                 }, 250);
             });
         }
+
+        applyCommunityPagination();
 
         document.querySelectorAll(".community-card").forEach(card => {
             card.addEventListener("click", () => {
@@ -421,5 +562,242 @@
                     }
                 });
         });
+
+        const rsvpModalEl = document.getElementById("rsvpConfirmModal");
+        const rsvpModal = rsvpModalEl ? new bootstrap.Modal(rsvpModalEl) : null;
+
+        function updateEventCardToRegistered(eventId) {
+            const actionsHost = document.querySelector(`.event-rsvp-btn[data-event-id="${eventId}"]`)?.parentElement;
+            if (!actionsHost) return;
+            actionsHost.innerHTML = `
+                <div class="d-flex gap-2">
+                    <button class="btn btn-outline-dark btn-sm event-details-btn" data-event-id="${eventId}">Details</button>
+                    <button class="btn btn-dark btn-sm event-cancel-btn" data-event-id="${eventId}">Cancel RSVP</button>
+                </div>
+            `;
+        }
+
+        function updateEventCardToNotRegistered(eventId) {
+            const detailsBtn = document.querySelector(`.event-details-btn[data-event-id="${eventId}"]`);
+            const actionsHost = detailsBtn?.closest(".ms-auto");
+            if (!actionsHost) return;
+            actionsHost.innerHTML = `<button class="btn btn-dark btn-sm event-rsvp-btn" data-event-id="${eventId}">RSVP</button>`;
+        }
+
+        function updateSeats(eventId, seatsBooked, seatsTotal) {
+            const seatText = document.querySelector(`.event-seat-text[data-event-id="${eventId}"]`);
+            if (seatText) {
+                seatText.textContent = `${seatsBooked} / ${seatsTotal} seats booked`;
+            }
+
+            const progress = document.querySelector(`.event-progress[data-event-id="${eventId}"]`);
+            if (progress) {
+                const pct = seatsTotal > 0 ? Math.round((seatsBooked * 100) / seatsTotal) : 0;
+                progress.style.width = `${pct}%`;
+            }
+        }
+
+        function updateMyEventsCount(newCount) {
+            const countEl = document.querySelector('.community-card[data-tab="events"] .fs-3');
+            if (countEl && typeof newCount === "number") {
+                countEl.textContent = newCount;
+            }
+        }
+
+        function escapeAttrValue(value) {
+            if (window.CSS && typeof window.CSS.escape === "function") {
+                return window.CSS.escape(value ?? "");
+            }
+            return (value ?? "").replace(/["\\]/g, "\\$&");
+        }
+
+        async function refreshBadgeSnapshot() {
+            try {
+                const res = await fetch("/Community/BadgeSnapshot", { method: "GET" });
+                if (!res.ok) return;
+                const data = await res.json();
+
+                const badgeCountEl = document.getElementById("myBadgesCount");
+                if (badgeCountEl && typeof data.badgeCount === "number") {
+                    badgeCountEl.textContent = data.badgeCount;
+                }
+
+                if (!Array.isArray(data.progress)) return;
+
+                data.progress.forEach((badge) => {
+                    const key = escapeAttrValue(badge.title || "");
+                    const bar = document.querySelector(`[data-progress-bar="${key}"]`);
+                    const text = document.querySelector(`[data-progress-text="${key}"]`);
+                    const ratio = document.querySelector(`[data-progress-ratio="${key}"]`);
+
+                    if (bar && typeof badge.percent === "number") {
+                        bar.style.width = `${badge.percent}%`;
+                    }
+                    if (text && typeof badge.percent === "number") {
+                        text.textContent = `${badge.percent}% complete`;
+                    }
+                    if (ratio) {
+                        ratio.textContent = `${badge.current ?? 0} / ${badge.target ?? 0}`;
+                    }
+                });
+            } catch {
+                // no-op: UI refresh should not break RSVP/download flows
+            }
+        }
+
+        function fillRsvpModal(data) {
+            const titleEl = document.getElementById("rsvpEventTitle");
+            const dateTimeEl = document.getElementById("rsvpEventDateTime");
+            const locationEl = document.getElementById("rsvpEventLocation");
+            const speakerEl = document.getElementById("rsvpEventSpeaker");
+            if (titleEl) titleEl.textContent = data.title || "-";
+            if (dateTimeEl) dateTimeEl.textContent = `${data.date || ""} ${data.time || ""} ${data.timezone || ""}`.trim();
+            if (locationEl) locationEl.textContent = data.location || "-";
+            if (speakerEl) {
+                const host = [data.hostName, data.hostTitle].filter(Boolean).join(", ");
+                speakerEl.textContent = host || "-";
+            }
+        }
+
+        document.addEventListener("click", (event) => {
+            const rsvpBtn = event.target.closest(".event-rsvp-btn");
+            if (!rsvpBtn) return;
+            event.preventDefault();
+
+            const eventId = rsvpBtn.getAttribute("data-event-id");
+            if (!eventId) return;
+
+            fetch(`/Community/RsvpEvent/${eventId}`, {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                    "RequestVerificationToken": antiForgeryToken || ""
+                }
+            })
+                .then(res => res.ok ? res.json() : Promise.reject())
+                .then(data => {
+                    updateEventCardToRegistered(eventId);
+                    updateSeats(eventId, data.seatsBooked, data.seatsTotal);
+                    updateMyEventsCount(data.registeredCount);
+                    fillRsvpModal(data);
+                    refreshBadgeSnapshot();
+                    rsvpModal?.show();
+                });
+        });
+
+        document.addEventListener("click", (event) => {
+            const detailsBtn = event.target.closest(".event-details-btn");
+            if (!detailsBtn) return;
+            event.preventDefault();
+
+            const eventCard = detailsBtn.closest(".card-body");
+            if (!eventCard) return;
+
+            const title = eventCard.querySelector("h5")?.textContent?.trim() || "-";
+            const host = eventCard.querySelector(".text-muted.small.mb-2")?.textContent?.replace(/^by\s+/i, "").trim() || "-";
+            const dateTime = eventCard.querySelector(".d-flex.flex-wrap.gap-4 .bi-calendar-event")?.parentElement?.textContent?.trim() || "-";
+            const location = eventCard.querySelector(".d-flex.flex-wrap.gap-4 .bi-geo-alt")?.parentElement?.textContent?.trim() || "-";
+
+            fillRsvpModal({
+                title,
+                date: dateTime,
+                time: "",
+                timezone: "",
+                location,
+                hostName: host,
+                hostTitle: ""
+            });
+            rsvpModal?.show();
+        });
+
+        document.addEventListener("click", (event) => {
+            const cancelBtn = event.target.closest(".event-cancel-btn");
+            if (!cancelBtn) return;
+            event.preventDefault();
+
+            const eventId = cancelBtn.getAttribute("data-event-id");
+            if (!eventId) return;
+
+            fetch(`/Community/CancelEventRsvp/${eventId}`, {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                    "RequestVerificationToken": antiForgeryToken || ""
+                }
+            })
+                .then(res => res.ok ? res.json() : Promise.reject())
+                .then(data => {
+                    updateEventCardToNotRegistered(eventId);
+                    updateSeats(eventId, data.seatsBooked, data.seatsTotal);
+                    updateMyEventsCount(data.registeredCount);
+                    refreshBadgeSnapshot();
+                });
+        });
+
+        document.addEventListener("click", async (event) => {
+            const downloadBtn = event.target.closest(".resource-download-btn");
+            if (!downloadBtn) return;
+            event.preventDefault();
+
+            const resourceId = downloadBtn.getAttribute("data-resource-id");
+            if (!resourceId) return;
+
+            const iconHtml = '<i class="bi bi-download me-1"></i>';
+            downloadBtn.classList.add("disabled");
+            downloadBtn.innerHTML = `${iconHtml}Downloading...`;
+
+            try {
+                const res = await fetch(`/Community/DownloadResource/${resourceId}?ajax=true`);
+                const data = await res.json();
+                if (!res.ok || !data?.success) {
+                    downloadBtn.classList.remove("disabled");
+                    downloadBtn.innerHTML = `${iconHtml}Download`;
+                    return;
+                }
+
+                const countEl = document.querySelector(`.resource-download-count[data-resource-id="${resourceId}"]`);
+                if (countEl && typeof data.downloadCount === "number") {
+                    countEl.textContent = data.downloadCount;
+                }
+
+                const myResourcesEl = document.getElementById("myResourcesCount");
+                if (myResourcesEl && typeof data.userDownloadCount === "number") {
+                    myResourcesEl.textContent = data.userDownloadCount;
+                }
+
+                refreshBadgeSnapshot();
+
+                downloadBtn.classList.remove("disabled");
+                downloadBtn.innerHTML = `${iconHtml}Download Again`;
+
+                if (data.downloadUrl) {
+                    const fileRes = await fetch(data.downloadUrl, { method: "GET" });
+                    if (!fileRes.ok) {
+                        return;
+                    }
+
+                    const blob = await fileRes.blob();
+                    const objectUrl = window.URL.createObjectURL(blob);
+                    const tempLink = document.createElement("a");
+                    tempLink.href = objectUrl;
+
+                    const disposition = fileRes.headers.get("content-disposition") || "";
+                    const match = disposition.match(/filename\*?=(?:UTF-8'')?\"?([^\";]+)\"?/i);
+                    if (match && match[1]) {
+                        tempLink.download = decodeURIComponent(match[1]);
+                    }
+
+                    document.body.appendChild(tempLink);
+                    tempLink.click();
+                    tempLink.remove();
+                    window.URL.revokeObjectURL(objectUrl);
+                }
+            } catch {
+                downloadBtn.classList.remove("disabled");
+                downloadBtn.innerHTML = `${iconHtml}Download`;
+            }
+        });
     </script>
 }
+
+

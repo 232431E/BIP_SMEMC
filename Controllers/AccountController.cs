@@ -16,12 +16,18 @@ namespace BIP_SMEMC.Controllers
         private readonly Supabase.Client _supabase;
         private readonly EmailService _emailService;
         private readonly PasswordResetTokenStore _resetTokenStore;
+        private readonly RewardsService _rewardsService;
 
-        public AccountController(Supabase.Client supabase, EmailService emailService, PasswordResetTokenStore resetTokenStore)
+        public AccountController(
+            Supabase.Client supabase,
+            EmailService emailService,
+            PasswordResetTokenStore resetTokenStore,
+            RewardsService rewardsService)
         {
             _supabase = supabase;
             _emailService = emailService;
             _resetTokenStore = resetTokenStore;
+            _rewardsService = rewardsService;
         }
 
         [HttpGet]
@@ -159,6 +165,8 @@ namespace BIP_SMEMC.Controllers
                 Industries = new List<string> { model.Industry },
                 Role = "User"
             });
+
+            await _rewardsService.EnsureSignupBonusAsync(email);
 
             TempData["SuccessMessage"] = "Signup successful. Please login.";
             return RedirectToAction(nameof(Login));

@@ -2,9 +2,49 @@
 
 @{
     ViewData["Title"] = Model.Title;
+
+    string ToEmbedUrl(string rawUrl)
+    {
+        if (string.IsNullOrWhiteSpace(rawUrl)) return string.Empty;
+        var url = rawUrl.Trim();
+
+        if (url.Contains("youtube.com/watch?v=", StringComparison.OrdinalIgnoreCase))
+        {
+            var videoId = url.Split("watch?v=", StringSplitOptions.None).LastOrDefault()?.Split('&').FirstOrDefault();
+            if (!string.IsNullOrWhiteSpace(videoId))
+                return $"https://www.youtube.com/embed/{videoId}";
+        }
+
+        if (url.Contains("youtu.be/", StringComparison.OrdinalIgnoreCase))
+        {
+            var videoId = url.Split("youtu.be/", StringSplitOptions.None).LastOrDefault()?.Split('?').FirstOrDefault();
+            if (!string.IsNullOrWhiteSpace(videoId))
+                return $"https://www.youtube.com/embed/{videoId}";
+        }
+
+        return url;
+    }
 }
 
 <div class="container mt-4">
+    <style>
+        .learning-media-wrap {
+            max-width: 860px;
+            margin: 0 auto 0.75rem auto;
+        }
+
+        .learning-image {
+            width: 100%;
+            max-height: 420px;
+            object-fit: cover;
+            border-radius: 0.5rem;
+        }
+
+        .learning-video-frame {
+            border-radius: 0.5rem;
+            overflow: hidden;
+        }
+    </style>
 
     <a href="/Learning" class="btn btn-link mb-3">
         ← Back to Learning Hub
@@ -45,15 +85,17 @@
 
                                     @if (!string.IsNullOrWhiteSpace(section.ImageUrl))
                                     {
-                                        <div class="mb-2">
-                                            <img src="@(section.ImageUrl)" class="img-fluid rounded" alt="Learning visual" />
+                                        <div class="learning-media-wrap">
+                                            <img src="@(section.ImageUrl)" class="learning-image" alt="Learning visual" />
                                         </div>
                                     }
 
                                     @if (!string.IsNullOrWhiteSpace(section.VideoUrl))
                                     {
-                                        <div class="ratio ratio-16x9 mb-2">
-                                            <iframe src="@(section.VideoUrl)" title="Learning video" allowfullscreen></iframe>
+                                        <div class="learning-media-wrap">
+                                            <div class="ratio ratio-16x9 learning-video-frame">
+                                                <iframe src="@(ToEmbedUrl(section.VideoUrl))" title="Learning video" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe>
+                                            </div>
                                         </div>
                                     }
                                 </div>

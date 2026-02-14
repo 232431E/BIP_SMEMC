@@ -6,6 +6,35 @@
     {
         activeTab = "vouchers";
     }
+
+    string GetProgressTrack(BIP_SMEMC.Models.CommunityBadge badge)
+    {
+        var text = $"{badge.Title} {badge.Description}".ToLowerInvariant();
+        if (text.Contains("module")) return "learning-modules";
+        if (text.Contains("quiz")) return "learning-quiz";
+        if (text.Contains("thread") || text.Contains("discussion")) return "community-discussions";
+        if (text.Contains("reply")) return "community-replies";
+        if (text.Contains("event") || text.Contains("rsvp")) return "community-events";
+        if (text.Contains("resource") || text.Contains("download")) return "community-resources";
+        if (text.Contains("point") || text.Contains("reputation")) return "points";
+        return "general";
+    }
+
+    var earnedAchievements = Model.Achievements
+        .Where(a => string.Equals(a.Status, "earned", StringComparison.OrdinalIgnoreCase))
+        .ToList();
+
+    var firstPendingPerTrack = Model.Achievements
+        .Where(a => !string.Equals(a.Status, "earned", StringComparison.OrdinalIgnoreCase))
+        .OrderBy(a => a.ProgressTarget ?? int.MaxValue)
+        .ThenBy(a => a.ProgressCurrent ?? 0)
+        .ThenBy(a => a.Points)
+        .ThenBy(a => a.Id)
+        .GroupBy(GetProgressTrack)
+        .Select(g => g.First())
+        .ToList();
+
+    var hasEarnedAchievements = earnedAchievements.Count > 0;
 }
 
 <div class="container-fluid py-4">
@@ -97,10 +126,10 @@
 
     <div class="tab-content" id="rewards-tab-content">
         <div class="tab-pane fade @(activeTab == "vouchers" ? "show active" : "")" id="vouchers-panel" role="tabpanel">
-            <div class="row g-3">
+            <div class="row g-3" id="vouchersList">
                 @foreach (var reward in Model.Rewards)
                 {
-                    <div class="col-md-6 col-xl-4">
+                    <div class="col-md-6 col-xl-4 paginate-item">
                         <div class="card h-100 shadow-sm">
                             <div class="card-body d-flex flex-column">
                                 <div class="d-flex justify-content-between align-items-center mb-2">
@@ -123,6 +152,7 @@
                     </div>
                 }
             </div>
+            <div id="vouchersPager" class="d-flex gap-2 justify-content-center mt-3"></div>
         </div>
 
         <div class="tab-pane fade @(activeTab == "achievements" ? "show active" : "")" id="achievements-panel" role="tabpanel">
@@ -130,67 +160,88 @@
                 <div class="card-body">
                     <h5 class="fw-bold mb-1">Your Achievements</h5>
                     <div class="text-muted mb-3">Unlock achievements to earn bonus points</div>
-                    @{
-                        var points = Model.CurrentPoints;
-                        var invoiceCount = Model.History.Count(h => h.Activity.Contains("invoice", StringComparison.OrdinalIgnoreCase));
-                        var budgetCount = Model.History.Count(h => h.Activity.Contains("budget", StringComparison.OrdinalIgnoreCase));
-                        var communityCount = Model.History.Count(h => h.Activity.Contains("thread", StringComparison.OrdinalIgnoreCase) || h.Activity.Contains("discussion", StringComparison.OrdinalIgnoreCase));
-                        var learningCount = Model.History.Count(h => h.Activity.Contains("learning", StringComparison.OrdinalIgnoreCase) || h.Activity.Contains("module", StringComparison.OrdinalIgnoreCase));
-                        var debtCount = Model.History.Count(h => h.Activity.Contains("debt", StringComparison.OrdinalIgnoreCase) || h.Activity.Contains("credit", StringComparison.OrdinalIgnoreCase));
-                        var pointsBadge = Model.CurrentPoints >= 250 ? "Unlocked" : "In Progress";
-                    }
-
-                    <div class="rounded-3 border border-success-subtle bg-success-subtle p-3 mb-3">
-                        <div class="d-flex justify-content-between align-items-center">
-                            <div class="d-flex align-items-center gap-3">
-                                <div class="rounded-3 bg-success-subtle p-2">
-                                    <i class="bi bi-check-circle text-success fs-5"></i>
-                                </div>
-                                <div>
-                                    <div class="fw-bold">First Milestone</div>
-                                    <div class="text-muted">Earn your first 250 points</div>
-                                </div>
-                            </div>
-                            <span class="badge rounded-pill bg-success-subtle text-success-emphasis border border-success-subtle">@pointsBadge</span>
-                        </div>
-                    </div>
-
-                    @{
-                        var items = new[]
-                        {
-                            new { Title = "Invoice Master", Description = "Create 50 invoices", Current = invoiceCount, Target = 50, Reward = 200, Icon = "bi-trophy" },
-                            new { Title = "Budget Guru", Description = "Maintain budget for 3 cycles", Current = budgetCount, Target = 3, Reward = 300, Icon = "bi-star" },
-                            new { Title = "Community Helper", Description = "Help 20 community members", Current = communityCount, Target = 20, Reward = 150, Icon = "bi-award" },
-                            new { Title = "Financial Scholar", Description = "Complete all learning modules", Current = learningCount, Target = 6, Reward = 500, Icon = "bi-mortarboard" },
-                            new { Title = "Debt Free", Description = "Complete 4 debt-related actions", Current = debtCount, Target = 4, Reward = 1000, Icon = "bi-graph-up-arrow" }
-                        };
-                    }
-
-                    @foreach (var item in items)
+                    @if (Model.Achievements.Count == 0)
                     {
-                        var progress = item.Target == 0 ? 0 : Math.Min(100, (int)Math.Round((double)item.Current * 100 / item.Target));
-                        <div class="rounded-3 border p-3 mb-3">
-                            <div class="d-flex justify-content-between align-items-center mb-2">
-                                <div class="d-flex align-items-center gap-3">
-                                    <div class="rounded-3 bg-body-tertiary p-2">
-                                        <i class="bi @item.Icon text-secondary fs-5"></i>
+                        <div class="text-muted">No achievements found in database.</div>
+                    }
+                    else
+                    {
+                        @if (firstPendingPerTrack.Count == 0)
+                        {
+                            <div class="text-muted mb-2">All current milestone tracks are completed.</div>
+                        }
+                        else
+                        {
+                            <div id="achievementsList">
+                            @foreach (var badge in firstPendingPerTrack)
+                            {
+                                var progressPercent = Math.Max(0, Math.Min(100, badge.ProgressPercent ?? 0));
+
+                                <div class="rounded-3 border p-3 mb-3 paginate-item">
+                                    <div class="d-flex justify-content-between align-items-center mb-2">
+                                        <div class="d-flex align-items-center gap-3">
+                                            <div class="rounded-3 bg-body-tertiary p-2">
+                                                <i class="bi @badge.Icon @badge.IconColor fs-5"></i>
+                                            </div>
+                                            <div>
+                                                <div class="fw-bold">@badge.Title</div>
+                                                <div class="text-muted">@badge.Description</div>
+                                            </div>
+                                        </div>
+                                        <span class="badge rounded-pill bg-body-tertiary text-body border">
+                                            <i class="bi bi-trophy me-1"></i>@badge.Points pts
+                                        </span>
                                     </div>
-                                    <div>
-                                        <div class="fw-bold">@item.Title</div>
-                                        <div class="text-muted">@item.Description</div>
-                                    </div>
+
+                                    @if (badge.ProgressTarget.HasValue && badge.ProgressTarget.Value > 0)
+                                    {
+                                        <div class="small text-muted mb-1">Progress</div>
+                                        <div class="progress" style="height:8px;">
+                                            <div class="progress-bar bg-dark" role="progressbar" style="width:@progressPercent%"></div>
+                                        </div>
+                                        <div class="text-end small mt-1">@((badge.ProgressCurrent ?? 0)) / @badge.ProgressTarget</div>
+                                    }
                                 </div>
-                                <span class="badge rounded-pill bg-body-tertiary text-body border">
-                                    <i class="bi bi-trophy me-1"></i>@item.Reward pts
-                                </span>
+                            }
+                            </div>
+                            <div id="achievementsPager" class="d-flex gap-2 justify-content-center mt-3"></div>
+                        }
+
+                        @if (hasEarnedAchievements)
+                        {
+                            <div class="mt-3">
+                                <button class="btn btn-outline-secondary btn-sm"
+                                        type="button"
+                                        data-bs-toggle="collapse"
+                                        data-bs-target="#completedAchievementsCollapse"
+                                        aria-expanded="false"
+                                        aria-controls="completedAchievementsCollapse">
+                                    Show Completed Achievements (@earnedAchievements.Count)
+                                </button>
                             </div>
 
-                            <div class="small text-muted mb-1">Progress</div>
-                            <div class="progress" style="height:8px;">
-                                <div class="progress-bar bg-dark" role="progressbar" style="width:@progress%"></div>
+                            <div class="collapse mt-3" id="completedAchievementsCollapse">
+                                @foreach (var badge in earnedAchievements)
+                                {
+                                    <div class="rounded-3 border border-success-subtle bg-success-subtle p-3 mb-3">
+                                        <div class="d-flex justify-content-between align-items-center">
+                                            <div class="d-flex align-items-center gap-3">
+                                                <div class="rounded-3 bg-body-tertiary p-2">
+                                                    <i class="bi @badge.Icon @badge.IconColor fs-5"></i>
+                                                </div>
+                                                <div>
+                                                    <div class="fw-bold">@badge.Title</div>
+                                                    <div class="text-muted">@badge.Description</div>
+                                                </div>
+                                            </div>
+                                            <span class="badge rounded-pill bg-success-subtle text-success-emphasis border border-success-subtle">
+                                                Unlocked
+                                            </span>
+                                        </div>
+                                    </div>
+                                }
                             </div>
-                            <div class="text-end small mt-1">@item.Current / @item.Target</div>
-                        </div>
+                        }
                     }
                 </div>
             </div>
@@ -215,10 +266,10 @@
                                         <th class="text-end">Points</th>
                                     </tr>
                                 </thead>
-                                <tbody>
+                                <tbody id="historyList">
                                 @foreach (var item in Model.History)
                                 {
-                                    <tr>
+                                    <tr class="paginate-item">
                                         <td>@item.Date.ToString("yyyy-MM-dd HH:mm")</td>
                                         <td>@item.Activity</td>
                                         <td class="text-end fw-semibold @(item.Points >= 0 ? "text-success" : "text-danger")">
@@ -229,6 +280,7 @@
                                 </tbody>
                             </table>
                         </div>
+                        <div id="historyPager" class="d-flex gap-2 justify-content-center mt-3"></div>
                     }
                 </div>
             </div>
@@ -239,6 +291,52 @@
 @section Scripts {
     <script>
         (function () {
+            function paginate(containerSelector, itemSelector, pagerSelector, pageSize) {
+                const container = document.querySelector(containerSelector);
+                const pager = document.querySelector(pagerSelector);
+                if (!container || !pager) return;
+
+                const items = Array.from(container.querySelectorAll(itemSelector));
+                if (items.length === 0) {
+                    pager.innerHTML = "";
+                    return;
+                }
+
+                const pages = Math.ceil(items.length / pageSize);
+                let current = 1;
+
+                const render = () => {
+                    items.forEach((el, i) => {
+                        const show = i >= (current - 1) * pageSize && i < current * pageSize;
+                        el.style.display = show ? "" : "none";
+                    });
+
+                    if (pages <= 1) {
+                        pager.innerHTML = "";
+                        return;
+                    }
+
+                    pager.innerHTML = "";
+                    for (let p = 1; p <= pages; p++) {
+                        const btn = document.createElement("button");
+                        btn.type = "button";
+                        btn.className = `btn btn-sm ${p === current ? "btn-dark" : "btn-outline-secondary"}`;
+                        btn.textContent = p;
+                        btn.addEventListener("click", () => {
+                            current = p;
+                            render();
+                        });
+                        pager.appendChild(btn);
+                    }
+                };
+
+                render();
+            }
+
+            paginate("#vouchersList", ".paginate-item", "#vouchersPager", 6);
+            paginate("#achievementsList", ".paginate-item", "#achievementsPager", 6);
+            paginate("#historyList", ".paginate-item", "#historyPager", 10);
+
             const tabs = document.querySelectorAll('#rewards-tabs button[data-bs-toggle="pill"]');
             tabs.forEach(function (tab) {
                 tab.addEventListener('shown.bs.tab', function (event) {

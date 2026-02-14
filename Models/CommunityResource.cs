@@ -17,6 +17,9 @@ public class CommunityResource : BaseModel
     [Required, Column("author")]
     public string Author { get; set; } = "";
 
+    [Column("user_id")]
+    public string UserId { get; set; } = "";
+
     [Required, Column("summary")]
     public string Summary { get; set; } = "";
 

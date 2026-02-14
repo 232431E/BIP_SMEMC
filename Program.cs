@@ -16,11 +16,10 @@ namespace BIP_SMEMC
             builder.Services.AddScoped<CategorySeederService>();
             builder.Services.AddHttpClient<GeminiService>();
             builder.Services.AddHostedService<NewsBGService>();
+            builder.Services.AddScoped<EmailService>();
+            builder.Services.AddSingleton<PasswordResetTokenStore>();
 
             // OptiFlow services
-            builder.Services.AddScoped<CashflowService>();
-            builder.Services.AddScoped<CreditService>();
-            builder.Services.AddScoped<NotificationService>();
             builder.Services.AddScoped<LearningService>();
             builder.Services.AddScoped<RewardsService>();
             builder.Services.AddScoped<CommunityService>();

@@ -9,12 +9,15 @@ namespace BIP_SMEMC.Controllers
         private readonly LearningService _learning;
         private readonly RewardsService _rewards;
 
-        private const string UserId = "Admin";
-
         public LearningController(LearningService learning, RewardsService rewards)
         {
             _learning = learning;
             _rewards = rewards;
+        }
+
+        private string? GetCurrentUserId()
+        {
+            return HttpContext.Session.GetString("UserEmail");
         }
 
         // ===================== LEARNING HUB =====================
@@ -22,19 +25,22 @@ namespace BIP_SMEMC.Controllers
         [HttpGet]
         public async Task<IActionResult> Index(LearningDifficulty difficulty = LearningDifficulty.Beginner)
         {
+            var userId = GetCurrentUserId();
+            if (string.IsNullOrWhiteSpace(userId)) return RedirectToAction("Login", "Account");
+
             var topics = await _learning.GetTopicsAsync();
-            var totalPoints = await _rewards.GetPointsAsync(UserId);
+            var totalPoints = await _rewards.GetPointsAsync(userId);
 
             var vm = new LearningHubIndexViewModel
             {
-                UserId = UserId,
+                UserId = userId,
                 TotalPoints = totalPoints,
                 ActiveDifficulty = difficulty
             };
 
             foreach (var t in topics)
             {
-                var progress = await _learning.GetProgressAsync(t.Id, difficulty);
+                var progress = await _learning.GetProgressAsync(userId, t.Id, difficulty);
 
                 vm.Topics.Add(new LearningTopicCardViewModel
                 {
@@ -51,7 +57,7 @@ namespace BIP_SMEMC.Controllers
                         _ => 0
                     },
                     DifficultyLabel = difficulty.ToString(),
-                    Unlocked = await _learning.IsUnlockedAsync(t.Id, difficulty),
+                    Unlocked = await _learning.IsUnlockedAsync(userId, t.Id, difficulty),
                     Passed = progress.Passed
                 });
             }
@@ -64,6 +70,9 @@ namespace BIP_SMEMC.Controllers
         [HttpGet]
         public async Task<IActionResult> Topic(int id, LearningDifficulty difficulty = LearningDifficulty.Beginner)
         {
+            var userId = GetCurrentUserId();
+            if (string.IsNullOrWhiteSpace(userId)) return RedirectToAction("Login", "Account");
+
             var topic = await _learning.GetTopicWithModulesAsync(id);
             if (topic == null)
                 return RedirectToAction(nameof(Index));
@@ -73,7 +82,7 @@ namespace BIP_SMEMC.Controllers
                 .OrderBy(m => m.Id)
                 .ToList();
 
-            ViewData["TotalPoints"] = await _rewards.GetPointsAsync(UserId);
+            ViewData["TotalPoints"] = await _rewards.GetPointsAsync(userId);
             ViewData["Topic"] = topic;
             ViewData["Difficulty"] = difficulty;
 
@@ -85,6 +94,9 @@ namespace BIP_SMEMC.Controllers
         [HttpGet]
         public async Task<IActionResult> Quiz(int topicId, LearningDifficulty difficulty)
         {
+            var userId = GetCurrentUserId();
+            if (string.IsNullOrWhiteSpace(userId)) return RedirectToAction("Login", "Account");
+
             var module = await _learning.GetModuleAsync(topicId, difficulty);
             if (module == null)
                 return RedirectToAction(nameof(Index));
@@ -95,8 +107,8 @@ namespace BIP_SMEMC.Controllers
 
             var vm = new LearningQuizPageViewModel
             {
-                UserId = UserId,
-                TotalPoints = await _rewards.GetPointsAsync(UserId),
+                UserId = userId,
+                TotalPoints = await _rewards.GetPointsAsync(userId),
                 Topic = topic,
                 Difficulty = difficulty,
                 Questions = module.QuizQuestions.ToList()
@@ -111,6 +123,9 @@ namespace BIP_SMEMC.Controllers
         [ValidateAntiForgeryToken]
         public async Task<IActionResult> SubmitQuiz(int topicId, LearningDifficulty difficulty)
         {
+            var userId = GetCurrentUserId();
+            if (string.IsNullOrWhiteSpace(userId)) return RedirectToAction("Login", "Account");
+
             var selectedOptionIds = new List<int>();
 
             foreach (var key in Request.Form.Keys)
@@ -124,6 +139,7 @@ namespace BIP_SMEMC.Controllers
             }
 
             var result = await _learning.EvaluateQuizAsync(
+                userId,
                 topicId,
                 difficulty,
                 selectedOptionIds

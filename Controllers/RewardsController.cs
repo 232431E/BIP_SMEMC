@@ -13,30 +13,40 @@ public class RewardsController : Controller
         _rewards = rewards;
     }
 
+    private string? GetCurrentUserId()
+    {
+        return HttpContext.Session.GetString("UserEmail");
+    }
+
     // GET: /Rewards
     public async Task<IActionResult> Index(string? tab = null)
     {
-        var userId = "Admin";
+        var userId = GetCurrentUserId();
+        if (string.IsNullOrWhiteSpace(userId)) return RedirectToAction("Login", "Account");
         var pointsTask = _rewards.GetPointsAsync(userId);
         var historyTask = _rewards.GetHistoryAsync(userId);
+        var achievementsTask = _rewards.GetAchievementsAsync(userId);
 
-        await Task.WhenAll(pointsTask, historyTask);
+        await Task.WhenAll(pointsTask, historyTask, achievementsTask);
 
         var history = historyTask.Result;
+        var achievements = achievementsTask.Result;
         var earned = history.Where(h => h.Points > 0).Sum(h => h.Points);
         var redeemed = Math.Abs(history.Where(h => h.Points < 0).Sum(h => h.Points));
         var currentPoints = pointsTask.Result;
+        var unlocked = achievements.Count(a => string.Equals(a.Status, "earned", StringComparison.OrdinalIgnoreCase));
 
         var vm = new RewardsPageViewModel
         {
             CurrentPoints = currentPoints,
             TotalEarned = earned,
             TotalRedeemed = redeemed,
-            TotalAchievements = 6,
-            AchievementsUnlocked = _rewards.GetUnlockedAchievementCount(currentPoints),
+            TotalAchievements = achievements.Count,
+            AchievementsUnlocked = unlocked,
             ActiveTab = string.IsNullOrWhiteSpace(tab) ? "vouchers" : tab.ToLowerInvariant(),
             Rewards = _rewards.GetRewards(),
-            History = history
+            History = history,
+            Achievements = achievements
         };
 
         return View(vm);
@@ -60,7 +70,8 @@ public class RewardsController : Controller
     [ValidateAntiForgeryToken]
     public async Task<IActionResult> Redeem(int rewardId)
     {
-        var userId = "Admin";
+        var userId = GetCurrentUserId();
+        if (string.IsNullOrWhiteSpace(userId)) return RedirectToAction("Login", "Account");
         var result = await _rewards.TryRedeemAsync(userId, rewardId);
         if (result.Success)
         {

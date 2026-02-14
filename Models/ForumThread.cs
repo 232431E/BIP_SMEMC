@@ -28,6 +28,9 @@ public class ForumThread : BaseModel
     [Column("author")]
     public string Author { get; set; } = "Anonymous";
 
+    [Column("user_id")]
+    public string UserId { get; set; } = "";
+
     [Column("author_reputation")]
     public int AuthorReputation { get; set; }
 

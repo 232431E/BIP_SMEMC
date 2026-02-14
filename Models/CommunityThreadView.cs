@@ -4,8 +4,8 @@ using Postgrest.Models;
 
 namespace BIP_SMEMC.Models;
 
-[Table("community_thread_replies")]
-public class ForumReply : BaseModel
+[Table("community_thread_views")]
+public class CommunityThreadView : BaseModel
 {
     [Key]
     [PrimaryKey("id", false)]
@@ -14,16 +14,8 @@ public class ForumReply : BaseModel
     [Column("thread_id")]
     public int ThreadId { get; set; }
 
-    [Required, MaxLength(40)]
-    [Column("author")]
-    public string Author { get; set; } = "Admin";
-
     [Column("user_id")]
     public string UserId { get; set; } = "";
-
-    [Required, MaxLength(1000)]
-    [Column("message")]
-    public string Message { get; set; } = "";
 
     [Column("created_at")]
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;

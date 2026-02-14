@@ -9,6 +9,7 @@ public class RewardProfile : BaseModel
 {
     [Key]
     [PrimaryKey("user_id", false)]
+    [Column("user_id")]
     public string UserId { get; set; } = "";
 
     [Column("points")]

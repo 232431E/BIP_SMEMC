@@ -7,8 +7,6 @@ namespace BIP_SMEMC.Services
         private readonly Supabase.Client _supabase;
         private readonly RewardsService _rewards;
 
-        private const string USER_ID = "Admin";
-
         public LearningService(Supabase.Client supabase, RewardsService rewards)
         {
             _supabase = supabase;
@@ -119,10 +117,10 @@ namespace BIP_SMEMC.Services
 
         /* ===================== PROGRESS ===================== */
 
-        public async Task<LearningProgress> GetProgressAsync(int topicId, LearningDifficulty difficulty)
+        public async Task<LearningProgress> GetProgressAsync(string userId, int topicId, LearningDifficulty difficulty)
         {
             var progressRes = await _supabase.From<LearningProgress>()
-                .Filter("user_id", Postgrest.Constants.Operator.Equals, USER_ID)
+                .Filter("user_id", Postgrest.Constants.Operator.Equals, userId)
                 .Filter("topic_id", Postgrest.Constants.Operator.Equals, topicId)
                 .Filter("difficulty", Postgrest.Constants.Operator.Equals, (int)difficulty)
                 .Get();
@@ -132,7 +130,7 @@ namespace BIP_SMEMC.Services
 
             var newProgress = new LearningProgress
             {
-                UserId = USER_ID,
+                UserId = userId,
                 TopicId = topicId,
                 Difficulty = difficulty,
                 Passed = false,
@@ -145,7 +143,7 @@ namespace BIP_SMEMC.Services
             return insertRes.Models.FirstOrDefault() ?? newProgress;
         }
 
-        public async Task<bool> IsUnlockedAsync(int topicId, LearningDifficulty difficulty)
+        public async Task<bool> IsUnlockedAsync(string userId, int topicId, LearningDifficulty difficulty)
         {
             if (difficulty == LearningDifficulty.Beginner)
                 return true;
@@ -153,7 +151,7 @@ namespace BIP_SMEMC.Services
             var previous = difficulty - 1;
 
             var progressRes = await _supabase.From<LearningProgress>()
-                .Filter("user_id", Postgrest.Constants.Operator.Equals, USER_ID)
+                .Filter("user_id", Postgrest.Constants.Operator.Equals, userId)
                 .Filter("topic_id", Postgrest.Constants.Operator.Equals, topicId)
                 .Filter("difficulty", Postgrest.Constants.Operator.Equals, (int)previous)
                 .Filter("passed", Postgrest.Constants.Operator.Equals, "true")
@@ -165,6 +163,7 @@ namespace BIP_SMEMC.Services
         /* ===================== QUIZ ===================== */
 
         public async Task<LearningQuizResult> EvaluateQuizAsync(
+            string userId,
             int topicId,
             LearningDifficulty difficulty,
             List<int> selectedOptionIds,
@@ -197,7 +196,7 @@ namespace BIP_SMEMC.Services
                 ? 0
                 : (int)Math.Round((double)correct * 100 / total);
 
-            var progress = await GetProgressAsync(topicId, difficulty);
+            var progress = await GetProgressAsync(userId, topicId, difficulty);
 
             if (percentageScore > progress.BestScore)
                 progress.BestScore = percentageScore;
@@ -216,7 +215,7 @@ namespace BIP_SMEMC.Services
                 };
 
                 progress.PointsAwarded = points;
-                await _rewards.AddPointsAsync(USER_ID, points, "Completed Learning Quiz");
+                await _rewards.AddPointsAsync(userId, points, "Completed Learning Quiz");
             }
 
             progress.UpdatedAtUtc = DateTime.UtcNow;

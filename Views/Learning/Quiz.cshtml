@@ -1,39 +1,150 @@
-﻿@model BIP_SMEMC.Models.LearningQuizPageViewModel
+@model BIP_SMEMC.Models.LearningQuizPageViewModel
 
 @{
     ViewData["Title"] = "Quiz";
+    var totalQuestions = Model.Questions?.Count ?? 0;
 }
 
-<h2>@Model.Topic.Title (@Model.Difficulty)</h2>
-<p>Total Points: <strong>@Model.TotalPoints</strong></p>
+<div class="container py-4">
+    <style>
+        .quiz-shell {
+            max-width: 980px;
+            margin: 0 auto;
+        }
 
-<form action="/Learning/SubmitQuiz" method="post">
-    @Html.AntiForgeryToken()
+        .quiz-header {
+            border: 1px solid #e9ecef;
+            border-radius: .9rem;
+            padding: 1rem 1.1rem;
+            background: #fff;
+            margin-bottom: 1rem;
+        }
 
-    <input type="hidden" name="topicId" value="@Model.Topic.Id" />
-    <input type="hidden" name="difficulty" value="@Model.Difficulty" />
+        .quiz-title {
+            font-weight: 700;
+            margin: 0;
+        }
 
-    @foreach (var q in Model.Questions)
-    {
-        <div style="margin-bottom:20px;">
-            <p><strong>@q.Question</strong></p>
+        .quiz-sub {
+            color: #6c757d;
+            margin-top: .2rem;
+            margin-bottom: 0;
+        }
 
-            @foreach (var opt in q.Options)
-            {
-                <label>
-                    <input type="radio"
-                           name="q_@q.Id"
-                           value="@opt.Id"
-                           required />
-                    @opt.Text
-                </label>
-                <br />
-            }
+        .quiz-meta {
+            display: flex;
+            gap: .5rem;
+            flex-wrap: wrap;
+            margin-top: .7rem;
+        }
+
+        .quiz-chip {
+            display: inline-flex;
+            align-items: center;
+            border-radius: 999px;
+            padding: .35rem .65rem;
+            font-size: .82rem;
+            font-weight: 600;
+            line-height: 1;
+            color: #0f172a !important;
+            border: 1px solid #dbe3ec;
+            background: #f8fafc;
+        }
+
+        .quiz-chip-primary {
+            color: #fff !important;
+            border-color: #0d6efd;
+            background: #0d6efd;
+        }
+
+        .quiz-chip-warn {
+            color: #7a4b00 !important;
+            border-color: #f7d07a;
+            background: #fff4d6;
+        }
+
+        .quiz-question {
+            border: 1px solid #e9ecef;
+            border-radius: .9rem;
+            padding: 1rem 1.1rem;
+            background: #fff;
+            margin-bottom: .9rem;
+        }
+
+        .quiz-question-title {
+            font-weight: 600;
+            margin-bottom: .75rem;
+        }
+
+        .quiz-opt {
+            display: block;
+            border: 1px solid #dee2e6;
+            border-radius: .65rem;
+            padding: .6rem .75rem;
+            margin-bottom: .55rem;
+            cursor: pointer;
+            transition: border-color .12s ease, background-color .12s ease;
+        }
+
+        .quiz-opt:hover {
+            border-color: #86b7fe;
+            background-color: #f8fbff;
+        }
+
+        .quiz-opt input[type="radio"] {
+            margin-right: .55rem;
+            transform: translateY(1px);
+        }
+    </style>
+
+    <div class="quiz-shell">
+        <a href="@Url.Action("Topic", "Learning", new { id = Model.Topic.Id, difficulty = Model.Difficulty })" class="btn btn-outline-secondary btn-sm mb-2">
+            <i class="bi bi-arrow-left me-1"></i>Back
+        </a>
+
+        <div class="quiz-header">
+            <h2 class="quiz-title">@Model.Topic.Title Quiz</h2>
+            <p class="quiz-sub">Answer all questions and submit to get your score.</p>
+            <div class="quiz-meta">
+                <span class="quiz-chip quiz-chip-primary">@Model.Difficulty</span>
+                <span class="quiz-chip">@totalQuestions Questions</span>
+                <span class="quiz-chip quiz-chip-warn"><i class="bi bi-trophy me-1"></i>@Model.TotalPoints pts</span>
+            </div>
         </div>
-    }
 
-    <button type="submit" class="btn btn-primary">
-        Submit Quiz
-    </button>
-</form>
+        <form action="/Learning/SubmitQuiz" method="post">
+            @Html.AntiForgeryToken()
 
+            <input type="hidden" name="topicId" value="@Model.Topic.Id" />
+            <input type="hidden" name="difficulty" value="@Model.Difficulty" />
+
+            @for (var i = 0; i < totalQuestions; i++)
+            {
+                var q = Model.Questions[i];
+                <div class="quiz-question">
+                    <div class="d-flex justify-content-between align-items-start mb-1">
+                        <div class="quiz-chip">Question @(i + 1)</div>
+                    </div>
+                    <div class="quiz-question-title">@q.Question</div>
+
+                    @foreach (var opt in q.Options)
+                    {
+                        <label class="quiz-opt">
+                            <input type="radio"
+                                   name="q_@q.Id"
+                                   value="@opt.Id"
+                                   required />
+                            @opt.Text
+                        </label>
+                    }
+                </div>
+            }
+
+            <div class="d-flex justify-content-end mb-2">
+                <button type="submit" class="btn btn-primary btn-lg px-4">
+                    Submit Quiz
+                </button>
+            </div>
+        </form>
+    </div>
+</div>

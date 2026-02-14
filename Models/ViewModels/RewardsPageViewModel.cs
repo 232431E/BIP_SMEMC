@@ -12,4 +12,5 @@ public class RewardsPageViewModel
     public string ActiveTab { get; set; } = "vouchers";
     public List<Reward> Rewards { get; set; } = new();
     public List<RewardHistoryItem> History { get; set; } = new();
+    public List<CommunityBadge> Achievements { get; set; } = new();
 }

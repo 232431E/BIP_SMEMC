@@ -4,27 +4,23 @@ using Postgrest.Models;
 
 namespace BIP_SMEMC.Models;
 
-[Table("community_thread_replies")]
-public class ForumReply : BaseModel
+[Table("community_event_rsvps")]
+public class CommunityEventRsvp : BaseModel
 {
     [Key]
     [PrimaryKey("id", false)]
     public int Id { get; set; }
 
-    [Column("thread_id")]
-    public int ThreadId { get; set; }
-
-    [Required, MaxLength(40)]
-    [Column("author")]
-    public string Author { get; set; } = "Admin";
+    [Column("event_id")]
+    public int EventId { get; set; }
 
     [Column("user_id")]
     public string UserId { get; set; } = "";
 
-    [Required, MaxLength(1000)]
-    [Column("message")]
-    public string Message { get; set; } = "";
+    [Column("reminder_set")]
+    public bool ReminderSet { get; set; } = true;
 
     [Column("created_at")]
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 }
+
