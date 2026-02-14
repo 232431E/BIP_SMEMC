@@ -6,19 +6,29 @@ namespace BIP_SMEMC.Models
     {
         public string UserName { get; set; } = "User";
 
-        // --- 1. HEADLINE METRICS ---
+        public bool IsHistoricalData { get; set; } // Tracks if current month is empty
+        public string DataMonthLabel { get; set; } // Label for the italic tag
+
+        // headline Metrics
         public decimal TotalRevenue { get; set; }
         public decimal TotalExpenses { get; set; }
         public decimal NetProfit => TotalRevenue - TotalExpenses;
         public decimal TotalDebt { get; set; }
 
-        // --- 2. INSIGHTS ---
+        // Insights & Customization
         public string AiSummary { get; set; }
         public List<NextBestAction> ActionItems { get; set; } = new();
 
-        // --- 3. CHARTS ---
+        // Charts
         public List<ChartDataPoint> CashflowTrend { get; set; } = new();
         public List<BudgetStatusItem> BudgetHealth { get; set; } = new();
+
+        // --- NEW MODULE SUMMARIES ---
+        public int RewardsPoints { get; set; }
+        public int NewForumPosts { get; set; }
+        public double LearningCompletionPct { get; set; }
+        public string NextLessonTitle { get; set; }
+        public decimal PendingPayroll { get; set; }
     }
 
     public class NextBestAction

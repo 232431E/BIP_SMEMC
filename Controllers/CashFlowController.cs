@@ -1,6 +1,7 @@
 ﻿using BIP_SMEMC.Models;
 using BIP_SMEMC.Services;
 using Microsoft.AspNetCore.Mvc;
+using System.Composition;
 using System.Diagnostics;
 
 namespace BIP_SMEMC.Controllers
@@ -31,177 +32,91 @@ namespace BIP_SMEMC.Controllers
                 var userPrefs = userRes.Models.FirstOrDefault();
                 model.UserPreferences = userPrefs;
 
-                var indList = (await _supabase.From<IndustryModel>().Get()).Models;
-                var regList = (await _supabase.From<RegionModel>().Get()).Models;
-
-                ViewBag.AllIndustries = indList.OrderBy(i => i.Name).ToList();
-                ViewBag.AllRegions = regList.OrderBy(r => r.Name).ToList();
-
-                Debug.WriteLine($"[METADATA] Loaded {indList.Count} Industries, {regList.Count} Regions for Filter Modal.");
-
                 var categoriesList = (await _supabase.From<CategoryModel>().Get()).Models;
                 var catMap = categoriesList.ToDictionary(k => k.Id, v => v);
+                var revRoot = categoriesList.FirstOrDefault(c => c.Name.Equals("Revenue", StringComparison.OrdinalIgnoreCase))?.Id;
+                var expRoot = categoriesList.FirstOrDefault(c => c.Name.Equals("Expense", StringComparison.OrdinalIgnoreCase))?.Id;
+                var cogsRoot = categoriesList.FirstOrDefault(c => c.Name.Contains("Cost of Goods Sold"))?.Id;
 
                 var anchorDate = await _financeService.GetLatestTransactionDate(userEmail);
                 model.LatestDataDate = anchorDate;
 
-                // Get 6 months history for the "Trend"
-                var startDate = anchorDate.AddMonths(-6);
-                var history = await _financeService.GetUserTransactions(userEmail, startDate, anchorDate);
+                // 2. Fetch & Deduplicate (Matching Dashboard total of $1.46M)
+                DateTime startDate = anchorDate.AddMonths(-12);
+                var rawHistory = await _financeService.GetUserTransactions(userEmail, startDate, anchorDate);
+                var history = _financeService.GetCleanOperationalData(_financeService.Deduplicate(rawHistory));
 
-                // Map Category Names (needed for AI & Logic)
-                foreach (var t in history)
+                _financeService.LogMonthlyDiagnosticReport(history, revRoot, expRoot, cogsRoot, categoriesList);
+
+                // 3. DAILYSurplus Calculation (Cumulative In/Out)
+                var dailyStats = history.GroupBy(t => t.Date.Date).OrderBy(g => g.Key)
+                    .Select(g => new {
+                        Date = g.Key,
+                        Rev = g.Where(t => _financeService.IsRevenue(t, revRoot, categoriesList)).Sum(t => t.Credit),
+                        Exp = g.Where(t => _financeService.IsExpense(t, expRoot, cogsRoot, categoriesList)).Sum(t => t.Debit)
+                    }).ToList();
+
+                decimal cumulativeNet = 0;
+                foreach (var day in dailyStats)
                 {
-                    if (t.CategoryId.HasValue && catMap.TryGetValue(t.CategoryId.Value, out var c))
-                        t.CategoryName = c.Name;
+                    cumulativeNet += (day.Rev - day.Exp);
+                    model.ChartData.Add(new ChartDataPoint { Date = day.Date.ToString("yyyy-MM-dd"), Actual = cumulativeNet });
                 }
+                model.CurrentBalance = cumulativeNet;
 
-                // 2. CALCULATE CHART DATA (Cumulative Balance)
-                decimal currentCash = 0;
-                var historicalPoints = new List<ChartDataPoint>();
+                // 4. Forecating Engine
+                decimal weightedRev = 0, weightedFix = 0, weightedVar = 0, totalWeight = 0;
+                var monthlyGroups = history.GroupBy(t => new { t.Date.Year, t.Date.Month }).OrderBy(g => g.Key.Year).ThenBy(g => g.Key.Month).ToList();
 
-                foreach (var t in history.OrderBy(t => t.Date))
+                foreach (var group in monthlyGroups)
                 {
-                    currentCash += (t.Credit - t.Debit);
-                    historicalPoints.Add(new ChartDataPoint
-                    {
-                        Date = t.Date.ToString("yyyy-MM-dd"),
-                        Actual = currentCash
-                    });
-                }
-                model.CurrentBalance = currentCash;
-                model.ChartData.AddRange(historicalPoints);
-
-                // 3. SMART FORECASTING ENGINE (Weighted + Anomaly Free)
-                // ----------------------------------------------------
-                decimal weightedRevenue = 0;
-                decimal weightedFixed = 0;
-                decimal weightedVar = 0;
-                decimal totalWeight = 0;
-
-                // Anomaly Keywords (One-off large expenses to ignore in forecast)
-                var anomalyKeywords = new[] { "renovation", "deposit", "equipment", "setup fee" };
-
-                // Group by Month to apply weighting
-                var monthlyGroups = history
-                    .GroupBy(t => new { t.Date.Year, t.Date.Month })
-                    .OrderBy(g => g.Key.Year).ThenBy(g => g.Key.Month)
-                    .ToList();
-
-                // Apply Weights: Most recent month = 3, Previous = 2, Others = 1
-                // This makes the forecast sensitive to recent changes (like a sudden rent hike)
-                for (int i = 0; i < monthlyGroups.Count; i++)
-                {
-                    var group = monthlyGroups[i];
-                    int weight = (i >= monthlyGroups.Count - 2) ? 3 : 1;
-
-                    decimal mRev = 0, mFixed = 0, mVar = 0;
+                    int weight = (monthlyGroups.IndexOf(group) >= monthlyGroups.Count - 2) ? 3 : 1;
+                    decimal mRev = 0, mFix = 0, mVar = 0;
 
                     foreach (var t in group)
                     {
-                        string cName = (t.CategoryName ?? "").ToLower();
-                        string desc = (t.Description ?? "").ToLower();
+                        if (t.CategoryId.HasValue && catMap.TryGetValue(t.CategoryId.Value, out var c)) t.CategoryName = c.Name;
 
-                        // SKIP: Depreciation/Amortization
-                        if (cName.Contains("depreciation")) continue;
-
-                        if (t.Credit > 0) mRev += t.Credit;
-                        else if (t.Debit > 0)
+                        if (_financeService.IsRevenue(t, revRoot, categoriesList)) mRev += t.Credit;
+                        else if (_financeService.IsExpense(t, expRoot, cogsRoot, categoriesList))
                         {
-                            // SKIP: Anomalies
-                            if (anomalyKeywords.Any(k => cName.Contains(k) || desc.Contains(k))) continue;
-
-                            // Classify Fixed vs Variable
-                            if (cName.Contains("rent") || cName.Contains("salary") || cName.Contains("loan") || cName.Contains("subscription"))
-                                mFixed += t.Debit;
-                            else
-                                mVar += t.Debit;
+                            string name = (t.CategoryName ?? "").ToLower();
+                            // Fixed Cost detection for Projection
+                            bool isFixed = name.Contains("rent") || name.Contains("salary") || name.Contains("loan") || name.Contains("wage") || name.Contains("payroll");
+                            if (isFixed) mFix += t.Debit;
+                            else mVar += t.Debit;
                         }
                     }
-
-                    weightedRevenue += (mRev * weight);
-                    weightedFixed += (mFixed * weight);
-                    weightedVar += (mVar * weight);
-                    totalWeight += weight;
+                    weightedRev += (mRev * weight); weightedFix += (mFix * weight); weightedVar += (mVar * weight); totalWeight += weight;
                 }
 
-                // Calculate Weighted Averages per Month
-                decimal avgWRev = totalWeight > 0 ? weightedRevenue / totalWeight : 0;
-                decimal avgWFixed = totalWeight > 0 ? weightedFixed / totalWeight : 0;
-                decimal avgWVar = totalWeight > 0 ? weightedVar / totalWeight : 0;
-                decimal varRatio = avgWRev > 0 ? avgWVar / avgWRev : 0;
+                model.MonthlyFixedBurn = totalWeight > 0 ? weightedFix / totalWeight : 0;
+                decimal avgWRev = totalWeight > 0 ? weightedRev / totalWeight : 0;
+                model.VariableCostRatio = avgWRev > 0 ? (weightedVar / totalWeight) / avgWRev : 0;
 
-                model.MonthlyFixedBurn = avgWFixed;
-                model.VariableCostRatio = varRatio;
-
-                // 4. GENERATE PROJECTION (Next 30 Days)
-                // ----------------------------------------------------
-                // Bridge Point
-                model.ChartData.Add(new ChartDataPoint
-                {
-                    Date = anchorDate.ToString("yyyy-MM-dd"),
-                    Actual = null,
-                    Predicted = currentCash
-                });
-
-                // Calculate Seasonality (Optional: Apply specific month multiplier)
-                // For this month (Month + 1)
+                // 5. Projection
                 int nextMonth = anchorDate.AddMonths(1).Month;
                 double seasonalMult = _financeService.CalculateSeasonalityMultiplier(history, nextMonth);
-
-                var projections = GenerateSmartProjection(
-                    currentCash,
-                    anchorDate,
-                    avgWRev * (decimal)seasonalMult, // Apply seasonality to revenue 
-                    varRatio,
-                    avgWFixed
-                );
-
+                var projections = GenerateSmartProjection(cumulativeNet, anchorDate, avgWRev * (decimal)seasonalMult, model.VariableCostRatio, model.MonthlyFixedBurn);
                 model.ChartData.AddRange(projections);
                 model.ProjectedCashIn30Days = projections.Last().Predicted ?? 0;
 
-                // Determine Runway Text
-                decimal netBurn = (avgWFixed + (avgWRev * varRatio)) - avgWRev;
-                model.CashRunway = netBurn > 0 && currentCash > 0
-                    ? $"{currentCash / netBurn:N1} Months Runway"
-                    : "Cashflow Positive";
-
-                // 5. AI DEEP ANALYSIS & PERSISTENCE
-                // ----------------------------------------------------
-                // Check if we already did analysis today
+                decimal monthlyProfit = avgWRev - (model.MonthlyFixedBurn + (avgWRev * model.VariableCostRatio));
+                model.CashRunway = monthlyProfit > 0 ? "Operating Profitably (Steady Profit)" : (cumulativeNet > 0 ? $"{(cumulativeNet / Math.Abs(monthlyProfit)):N1} Months Runway" : "0 Months");
+                // 6. Fix for AI Persistence query
+                string todayKey = DateTime.UtcNow.ToString("yyyy-MM-dd");
                 var existingAI = await _supabase.From<AIResponseModel>()
-                    .Where(x => x.UserId == userEmail && x.FeatureType == "FINANCIAL_GRAPH_ANALYSIS" && x.DateKey == DateTime.UtcNow.Date)
-                    .Limit(1)
-                    .Get();
+                    .Where(x => x.UserId == userEmail && x.FeatureType == "FINANCIAL_GRAPH_ANALYSIS")
+                    .Filter("date_key", Postgrest.Constants.Operator.Equals, todayKey)
+                    .Limit(1).Get();
 
-                if (existingAI.Models.Any())
-                {
-                    model.AIAnalysis = existingAI.Models.First().ResponseText;
-                    Debug.WriteLine("[AI] Loaded cached analysis.");
-                }
-                else if (history.Count > 0)
-                {
-                    // Generate New
-                    var aiData = _financeService.GetCashflowSummaryForAI(history);
-                    string jsonSummary = Newtonsoft.Json.JsonConvert.SerializeObject(aiData);
-                    Debug.WriteLine($"[GEMINI SEND] Sending {jsonSummary.Length} chars of data to Gemini...");
-                    Debug.WriteLine("[GEMINI] Calling API...");
-                    var aiInsight = await HttpContext.RequestServices.GetRequiredService<GeminiService>()
-                        .GenerateDetailedCashflowAnalysis(jsonSummary);
-                    Debug.WriteLine($"[GEMINI] Received: {aiInsight.Substring(0, Math.Min(50, aiInsight.Length))}...");
-                    model.AIAnalysis = aiInsight;
-
-                    // Save
-                    await _financeService.SaveCashflowInsight(userEmail, aiInsight, "6M Weighted Trend");
-                }
+                if (existingAI.Models.Any()) model.AIAnalysis = existingAI.Models.First().ResponseText;
                 else
                 {
-                    model.AIAnalysis = "Insufficient data for analysis.";
+                    var aiData = _financeService.GetCashflowSummaryForAI(history);
+                    model.AIAnalysis = await HttpContext.RequestServices.GetRequiredService<GeminiService>().GenerateDetailedCashflowAnalysis(Newtonsoft.Json.JsonConvert.SerializeObject(aiData));
+                    await _financeService.SaveCashflowInsight(userEmail, model.AIAnalysis, "6M Weighted Trend");
                 }
-                // 5. FETCH NEWS (OPTIMIZED)
-                // Only fetch if preferences exist, otherwise don't slam the DB.
-                
-
                 // Fetch outlooks specific to user preferences
                 if (userPrefs != null)
                 {

@@ -24,7 +24,7 @@ namespace BIP_SMEMC.Controllers
             {
                 // 1. Get Data Range
                 var latestDate = await _financeService.GetLatestTransactionDate(userEmail);
-                var startDate = latestDate.AddMonths(-5);
+                var startDate = latestDate.AddMonths(-11);
 
                 // 2. Fetch Data
                 var allTrans = await _financeService.GetUserTransactions(userEmail, startDate, latestDate);
@@ -192,8 +192,9 @@ namespace BIP_SMEMC.Controllers
                         var leaf = categories.FirstOrDefault(c => c.Id == t.CategoryId);
                         while (leaf != null && leaf.ParentId != expenseRoot?.Id && leaf.ParentId != 0)
                             leaf = categories.FirstOrDefault(c => c.Id == leaf.ParentId);
-                        return leaf?.Id == catId;
+                        return leaf?.Id == catId; // Matches the Tier 1 Category ID
                     }).Sum(t => t.Debit);
+
 
                     decimal variance = budgetLimit - actual;
                     Debug.WriteLine($"[ANALYSIS] {cat.Name} (ID:{catId}) | Limit: {budgetLimit} | Spent: {actual} | Var: {variance}");

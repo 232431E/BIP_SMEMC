@@ -1,114 +1,184 @@
 ﻿@model BIP_SMEMC.Models.DashboardViewModel
 
-<div class="container-fluid p-4">
-    <div class="d-flex justify-content-between align-items-center mb-4">
-        <div>
-            <h1 class="h3 fw-bold mb-0">Financial Overview</h1>
-            <p class="text-muted small">Snapshot as of @DateTime.Now.ToString("MMM dd, yyyy")</p>
-        </div>
-        <a href="/CashFlow" class="btn btn-primary btn-sm"><i class="bi bi-graph-up me-2"></i>Full Forecast</a>
+<div class="container-fluid p-4 bg-light min-vh-100">
+    <div class="mb-4">
+        <h2 class="fw-bold mb-0">Financial Overview</h2>
+        @if (Model.IsHistoricalData)
+        {
+            <div class="alert alert-warning border-0 shadow-sm py-2 mt-2">
+                <i class="bi bi-clock-history me-2"></i>
+                <em class="fst-italic">The dashboard info below is based on the last uploaded data month: <strong>@Model.DataMonthLabel</strong></em>
+            </div>
+        }
+        else
+        {
+            <p class="text-muted small">Real-time status for @Model.DataMonthLabel</p>
+        }
     </div>
 
     <div class="row g-3 mb-4">
         <div class="col-md-3">
-            <div class="card p-3 shadow-sm border-0 h-100 bg-white border-start border-4 border-success">
-                <small class="text-muted text-uppercase fw-bold" style="font-size: 0.7rem;">Revenue (30 Days)</small>
-                <h3 class="text-success fw-bold mt-1">$@Model.TotalRevenue.ToString("N0")</h3>
+            <div class="card border-0 shadow-sm p-3 bg-white border-start border-4 border-success clickable-card" onclick="location.href='/Expense'">
+                <div class="d-flex justify-content-between align-items-center">
+                    <small class="text-muted text-uppercase fw-bold">Total Revenue</small>
+                    <i class="bi bi-cash-stack text-success"></i>
+                </div>
+                <h3 class="text-success fw-bold mt-2 mb-0">$@Model.TotalRevenue.ToString("N0")</h3>
             </div>
         </div>
         <div class="col-md-3">
-            <div class="card p-3 shadow-sm border-0 h-100 bg-white border-start border-4 border-danger">
-                <small class="text-muted text-uppercase fw-bold" style="font-size: 0.7rem;">Expenses (30 Days)</small>
-                <h3 class="text-danger fw-bold mt-1">$@Model.TotalExpenses.ToString("N0")</h3>
+            <div class="card border-0 shadow-sm p-3 bg-white border-start border-4 border-danger clickable-card" onclick="location.href='/Expense'">
+                <div class="d-flex justify-content-between align-items-center">
+                    <small class="text-muted text-uppercase fw-bold">Total Expenses</small>
+                    <i class="bi bi-cart-dash text-danger"></i>
+                </div>
+                <h3 class="text-danger fw-bold mt-2 mb-0">$@Model.TotalExpenses.ToString("N0")</h3>
             </div>
         </div>
         <div class="col-md-3">
-            <div class="card p-3 shadow-sm border-0 h-100 bg-white border-start border-4 border-primary">
-                <small class="text-muted text-uppercase fw-bold" style="font-size: 0.7rem;">Net Profit</small>
-                <h3 class="text-primary fw-bold mt-1">$@Model.NetProfit.ToString("N0")</h3>
+            <div class="card border-0 shadow-sm p-3 bg-white border-start border-4 border-primary h-100">
+                <small class="text-muted text-uppercase fw-bold">Net Profit</small>
+                <h3 class="@(Model.NetProfit >= 0 ? "text-primary" : "text-danger") fw-bold mt-2 mb-0">$@Model.NetProfit.ToString("N0")</h3>
             </div>
         </div>
         <div class="col-md-3">
-            <div class="card p-3 shadow-sm border-0 h-100 bg-white border-start border-4 border-warning">
-                <small class="text-muted text-uppercase fw-bold" style="font-size: 0.7rem;">Total Debt</small>
-                <h3 class="text-dark fw-bold mt-1">$@Model.TotalDebt.ToString("N0")</h3>
+            <div class="card border-0 shadow-sm p-3 bg-white border-start border-4 border-warning clickable-card" onclick="location.href='/Debt'">
+                <small class="text-muted text-uppercase fw-bold">Total Debt</small>
+                <h3 class="text-dark fw-bold mt-2 mb-0">$@Model.TotalDebt.ToString("N0")</h3>
             </div>
         </div>
     </div>
 
     <div class="row g-4">
         <div class="col-lg-8">
-            <div class="card shadow-sm border-0 h-100">
+            <div class="card border-0 shadow-sm mb-4">
                 <div class="card-header bg-white py-3">
-                    <h6 class="fw-bold m-0">Net Cashflow Trend (6 Months)</h6>
+                    <h6 class="fw-bold m-0">Net Cashflow Trend (Last 6 Months)</h6>
                 </div>
-                <div class="card-body">
-                    <canvas id="dashboardChart" style="max-height: 300px;"></canvas>
+                <div class="card-body" style="height: 420px; width: 100%; position: relative; overflow: hidden;">
+                    <canvas id="dashboardChart"></canvas>
                 </div>
             </div>
-        </div>
 
-        <div class="col-lg-4">
-            <div class="card shadow-sm border-0 h-100">
-                <div class="card-header bg-white py-3 d-flex justify-content-between align-items-center">
-                    <h6 class="fw-bold m-0 text-danger"><i class="bi bi-lightning-charge-fill me-2"></i>Action Required</h6>
-                    <span class="badge bg-danger rounded-pill">@Model.ActionItems.Count</span>
+            <div class="card border-0 shadow-sm">
+                <div class="card-header bg-white py-3 d-flex justify-content-between">
+                    <h6 class="fw-bold m-0">Top Categories Health</h6>
+                    <a href="/Budget" class="small text-decoration-none">View All</a>
                 </div>
-                <div class="list-group list-group-flush">
-                    @foreach (var item in Model.ActionItems.Take(4))
+                <div class="card-body">
+                    @foreach (var item in Model.BudgetHealth.OrderByDescending(x => x.Spent).Take(4))
                     {
-                        <a href="@item.LinkAction" class="list-group-item list-group-item-action py-3">
-                            <div class="d-flex w-100 justify-content-between">
-                                <h6 class="mb-1 fw-bold text-dark">@item.Title</h6>
-                                <small class="@(item.Priority == "High" ? "text-danger fw-bold" : "text-muted")">@item.Priority</small>
+                        <div class="mb-3">
+                            <div class="d-flex justify-content-between small mb-1">
+                                <span class="fw-bold text-dark">@item.Category</span>
+                                <span class="text-muted">$@item.Spent.ToString("N0") / $@item.Budget.ToString("N0")</span>
                             </div>
-                            <p class="mb-1 small text-muted">@item.Reasoning</p>
-                        </a>
-                    }
-                    @if (!Model.ActionItems.Any())
-                    {
-                        <div class="p-4 text-center text-muted">
-                            <i class="bi bi-check-circle fs-1 text-success mb-2"></i>
-                            <p>No urgent issues detected.</p>
+                            <div class="progress" style="height: 8px;">
+                                <div class="progress-bar @(item.Percentage > 100 ? "bg-danger" : "bg-success")"
+                                     style="width: @(Math.Min(item.Percentage, 100))%"></div>
+                            </div>
                         </div>
                     }
                 </div>
             </div>
         </div>
-    </div>
 
-    <div class="alert alert-info border-0 shadow-sm mt-4 d-flex align-items-start">
-        <i class="bi bi-robot fs-3 me-3"></i>
-        <div>
-            <h6 class="fw-bold">AI Financial Insight</h6>
-            <p class="mb-0 small">@Model.AiSummary</p>
+        <div class="col-lg-4">
+            <div class="card border-0 shadow-sm mb-4">
+                <div class="card-header bg-white py-3 d-flex justify-content-between align-items-center">
+                    <h6 class="fw-bold m-0 text-danger"><i class="bi bi-lightning-charge-fill me-2"></i>Action Required</h6>
+                    <span class="badge bg-danger rounded-pill">@Model.ActionItems.Count</span>
+                </div>
+                <div class="list-group list-group-flush">
+                    @foreach (var item in Model.ActionItems.Take(5))
+                    {
+                        <a href="@item.LinkAction" class="list-group-item list-group-item-action py-3 border-start border-4 @(item.Priority == "High" ? "border-danger" : "border-info")">
+                            <h6 class="mb-1 fw-bold text-dark">@item.Title</h6>
+                            <p class="mb-0 extra-small text-muted">@item.Reasoning</p>
+                        </a>
+                    }
+                </div>
+            </div>
+
+            <div class="card border-0 shadow-sm bg-dark text-white">
+                <div class="card-body p-4">
+                    <h6 class="fw-bold mb-3 text-warning"><i class="bi bi-stars me-2"></i>AI Strategic Insight</h6>
+                    <p class="small opacity-75 mb-0">"@Model.AiSummary"</p>
+                </div>
+            </div>
         </div>
     </div>
 </div>
-
 @section Scripts {
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script>
-        const chartData = @Html.Raw(Json.Serialize(Model.CashflowTrend));
+        document.addEventListener("DOMContentLoaded", function () {
+            const trendData = @Html.Raw(Json.Serialize(Model.CashflowTrend));
+            const ctx = document.getElementById('dashboardChart').getContext('2d');
 
-        const ctx = document.getElementById('dashboardChart').getContext('2d');
-        new Chart(ctx, {
-            type: 'bar',
-            data: {
-                labels: chartData.map(d => d.date),
-                datasets: [{
-                    label: 'Net Cashflow',
-                    data: chartData.map(d => d.actual),
-                    backgroundColor: chartData.map(d => d.actual >= 0 ? '#10b981' : '#ef4444'),
-                    borderRadius: 4
-                }]
-            },
-            options: {
-                responsive: true,
-                maintainAspectRatio: false,
-                plugins: { legend: { display: false } },
-                scales: { y: { beginAtZero: true } }
-            }
+            new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: trendData.map(d => d.date),
+                    datasets: [{
+                        label: 'Net Cashflow ($)',
+                        data: trendData.map(d => d.actual),
+                        borderColor: '#0d6efd',
+                        backgroundColor: (context) => {
+                            const chart = context.chart;
+                            const {ctx, chartArea} = chart;
+                            if (!chartArea) return null;
+                            const gradient = ctx.createLinearGradient(0, chartArea.bottom, 0, chartArea.top);
+                            gradient.addColorStop(0, 'rgba(13, 110, 253, 0.01)');
+                            gradient.addColorStop(1, 'rgba(13, 110, 253, 0.2)');
+                            return gradient;
+                        },
+                        borderWidth: 3,
+                        tension: 0.3, // Smoother curve
+                        fill: true,
+                        pointRadius: 5,
+                        pointHoverRadius: 8,
+                        pointBackgroundColor: '#0d6efd'
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false, // Vital for the fixed height container
+                    plugins: {
+                        legend: { display: false },
+                        tooltip: {
+                            callbacks: {
+                                label: (item) => `Net: $${item.raw.toLocaleString()}`
+                            }
+                        }
+                    },
+                    scales: {
+                        y: {
+                            beginAtZero: true, // Shows the negativity clearly
+                            grid: { borderDash: [5, 5], color: '#e0e0e0' },
+                            ticks: {
+                                callback: (value) => value < 0 ? `-$${Math.abs(value/1000)}k` : `$${value/1000}k`
+                            }
+                        },
+                        x: { grid: { display: false } }
+                    }
+                }
+            });
         });
     </script>
 }
+<style>
+    .clickable-card {
+        cursor: pointer;
+        transition: 0.2s;
+    }
+
+        .clickable-card:hover {
+            transform: translateY(-3px);
+            box-shadow: 0 8px 25px rgba(0,0,0,0.1) !important;
+        }
+
+    .extra-small {
+        font-size: 0.75rem;
+    }
+</style>

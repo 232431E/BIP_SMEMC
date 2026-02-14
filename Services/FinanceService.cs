@@ -12,8 +12,70 @@ namespace BIP_SMEMC.Services
             _supabase = supabase;
         }
 
-        // Services/FinanceService.cs
+    // Fully synchronized with Dashboard keywords
+    public readonly string[] NonRevenueCreditKeywords = {
+        "Refund", "Adv pay", "Adjustment", "Disbursement", "Opening Balance",
+        "Balance Forward", "Utilities Income", "Internet", "scale", "pay", "salary",
+        "Shortfall", "Shortage", "manpower pd for", "Petrol", "GST", "CPF", "FWL",
+        "Part JT", "Bal JT", "collection", "claim", "Return of loan", "Transfer"
+    };
 
+    public readonly string[] ExclusionEntities = {
+        "Comptroller", "Singtel", "Popular Book", "LTA", "IRAS", "MOM", "CPFB", "ACE STAR AUTO"
+    };
+
+    public bool IsRevenue(TransactionModel t, int? revRootId, List<CategoryModel> cats)
+    {
+        if (t.Credit <= 0 || !IsInHierarchy(t.CategoryId, revRootId, cats)) return false;
+        
+        return !NonRevenueCreditKeywords.Any(k => t.Description.Contains(k, StringComparison.OrdinalIgnoreCase)) &&
+               !ExclusionEntities.Any(e => t.Description.Contains(e, StringComparison.OrdinalIgnoreCase));
+    }
+
+    public bool IsExpense(TransactionModel t, int? expRootId, int? cogsRootId, List<CategoryModel> cats)
+    {
+        // Strictly Operational Expense and COGS to match Dashboard's $389k audit
+        return t.Debit > 0 && (IsInHierarchy(t.CategoryId, expRootId, cats) || 
+                               IsInHierarchy(t.CategoryId, cogsRootId, cats));
+    }
+
+    public List<TransactionModel> GetCleanOperationalData(List<TransactionModel> raw)
+    {
+        return raw.Where(t => 
+            !t.Description.Contains("Total", StringComparison.OrdinalIgnoreCase) &&
+            !t.Description.Contains("Balance Forward", StringComparison.OrdinalIgnoreCase) &&
+            !t.Description.Contains("Jan - Dec", StringComparison.OrdinalIgnoreCase)
+        ).ToList();
+    }
+
+    public List<TransactionModel> Deduplicate(List<TransactionModel> transactions)
+    {
+        return transactions.GroupBy(t => new { t.Date.Date, t.Description, t.Credit, t.Debit })
+                           .Select(g => g.First()).ToList();
+    }
+
+    public bool IsInHierarchy(int? catId, int? rootId, List<CategoryModel> cats)
+    {
+        if (catId == null || rootId == null) return false;
+        var curr = cats.FirstOrDefault(c => c.Id == catId);
+        while (curr != null) {
+            if (curr.Id == rootId) return true;
+            if (curr.ParentId == 0 || curr.ParentId == null) break;
+            curr = cats.FirstOrDefault(c => c.Id == curr.ParentId);
+        }
+        return false;
+    }
+
+    public void LogMonthlyDiagnosticReport(List<TransactionModel> transactions, int? revRoot, int? expRoot, int? cogsRoot, List<CategoryModel> categories)
+    {
+        var groups = transactions.GroupBy(t => new { t.Date.Year, t.Date.Month }).OrderBy(g => g.Key.Year).ThenBy(g => g.Key.Month);
+        Debug.WriteLine("============= FINANCE SERVICE: DIAGNOSTICS =============");
+        foreach (var g in groups) {
+            decimal mRev = g.Where(t => IsRevenue(t, revRoot, categories)).Sum(t => t.Credit);
+            decimal mExp = g.Where(t => IsExpense(t, expRoot, cogsRoot, categories)).Sum(t => t.Debit);
+            Debug.WriteLine($"Month: {g.Key.Month}/{g.Key.Year} | Operational Rev: {mRev:C0} | Operating Exp: {mExp:C0}");
+        }
+    }
         public async Task<DateTime> GetLatestTransactionDate(string userEmail)
         {
             try
@@ -227,6 +289,7 @@ namespace BIP_SMEMC.Services
         {
             return item.Date != default && item.Debit >= 0 && !string.IsNullOrEmpty(item.Description);
         }
+
         public decimal CalculateAvgDailyNet(List<TransactionModel> history, int year)
         {
             // Filter for the specific year
@@ -258,5 +321,6 @@ namespace BIP_SMEMC.Services
             if (a <= 70) return 6.00m;
             return 5.00m; // Above 70
         }
+        
     }
 }

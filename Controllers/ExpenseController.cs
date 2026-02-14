@@ -22,6 +22,20 @@ namespace BIP_SMEMC.Controllers
             _financeService = financeService;
             _debtService =  debtService;
         }
+
+        // Helper: Traces if a category belongs to a specific root tree
+        private bool IsInHierarchy(int? catId, int? rootId, List<CategoryModel> cats)
+        {
+            if (catId == null || rootId == null) return false;
+            var curr = cats.FirstOrDefault(c => c.Id == catId);
+            while (curr != null)
+            {
+                if (curr.Id == rootId) return true;
+                if (curr.ParentId == 0 || curr.ParentId == null) break;
+                curr = cats.FirstOrDefault(c => c.Id == curr.ParentId);
+            }
+            return false;
+        }
         public async Task<IActionResult> Index()
         {
             var userEmail = HttpContext.Session.GetString("UserEmail");
@@ -39,20 +53,24 @@ namespace BIP_SMEMC.Controllers
 
             var expenseRoot = categories.FirstOrDefault(c => c.Name.Equals("Expense", StringComparison.OrdinalIgnoreCase));
 
+            var cogsRoot = categories.FirstOrDefault(c => c.Name.Contains("Cost of Goods Sold"));
+
             var expensesOnly = allTrans
-                .Where(t => t.Debit > 0)
+                .Where(t => t.Debit > 0 && !t.Description.StartsWith("Total") && !t.Description.Contains("Balance"))
                 .Select(t => {
                     var leafCat = categories.FirstOrDefault(c => c.Id == t.CategoryId);
                     CategoryModel tier1 = leafCat;
-                    while (tier1 != null && tier1.ParentId != expenseRoot?.Id && tier1.ParentId != 0)
+                    // Trace to the Parent right below "Expense" or "Income" (for COGS)
+                    while (tier1 != null && tier1.ParentId != expenseRoot?.Id && tier1.ParentId != cogsRoot?.Id && tier1.ParentId != 0 && tier1.ParentId != null)
                         tier1 = categories.FirstOrDefault(c => c.Id == tier1.ParentId);
 
                     t.CategoryName = leafCat?.Name ?? "Uncategorized";
-                    t.ParentCategoryName = tier1?.Name ?? "General Expense";
+                    t.ParentCategoryName = tier1?.Name ?? "Uncategorized";
                     return t;
                 })
-                .Where(t => !t.ParentCategoryName.Contains("Ordinary") && !t.CategoryName.Contains("Jan - Dec"))
-                .OrderBy(x => x.Date).ToList();
+                // Include both direct Expenses and items in the COGS hierarchy
+                .Where(t => IsInHierarchy(t.CategoryId, expenseRoot?.Id, categories) || IsInHierarchy(t.CategoryId, cogsRoot?.Id, categories))
+                .OrderByDescending(x => x.Date).ToList();
 
             // --- NEW DEBUG STATEMENTS ---
             Debug.WriteLine("================ DASHBOARD DATA AUDIT ================");
@@ -70,12 +88,14 @@ namespace BIP_SMEMC.Controllers
             }
             Debug.WriteLine("======================================================");
 
+            // --- FIX: INSTANTIATE model BEFORE ASSIGNING PROPERTIES ---
             var model = new ExpenseManagementViewModel
             {
                 Transactions = expensesOnly,
                 ExpenseSubCategories = categories.Where(c => c.ParentId == expenseRoot?.Id).ToList(),
                 TotalExpenses = expensesOnly.Sum(t => t.Debit)
             };
+
             return View(model);
         }
         [HttpPost]
@@ -312,6 +332,16 @@ namespace BIP_SMEMC.Controllers
                     // 1. Safe Number Parsing (Prevents InvalidCastException)
                     string rawName = row.Cell(cols["name"]).GetString().Trim();
                     string rawDesc = row.Cell(cols["desc"]).GetString().Trim();
+
+                    // 1. STOPS DOUBLE COUNTING: Skip any row that is a "Total" or summary header
+                    bool isSummary = rawDesc.StartsWith("Total", StringComparison.OrdinalIgnoreCase) ||
+                                     rawDesc.EndsWith("Total", StringComparison.OrdinalIgnoreCase) ||
+                                     rawName.Contains("Total") ||
+                                     rawDesc.Contains("Balance Forward") ||
+                                     rawDesc.Contains("Jan - Dec");
+
+                    if (isSummary) continue;
+
                     string fullDesc = $"{rawName} {rawDesc}".Trim();
                     decimal dr = ParseSafeDecimal(row.Cell(cols.GetValueOrDefault("debit", 0)));
                     decimal cr = ParseSafeDecimal(row.Cell(cols.GetValueOrDefault("credit", 0)));
@@ -342,6 +372,11 @@ namespace BIP_SMEMC.Controllers
                         skippedLogs.Add($"Row {rowNum}: [DATE ERROR] Value: '{dateCell.GetString()}'");
                         continue;
                     }
+                    if (fullDesc.StartsWith("Total", StringComparison.OrdinalIgnoreCase) ||
+                        fullDesc.Contains("Balance Forward"))
+                    {
+                        continue;
+                    }
                     string cleanFull = Regex.Replace(fullDesc.ToLower(), @"[^a-z0-9]", "");
                     string nameOnlyClean = Regex.Replace(rawName.ToLower(), @"\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)('\d{2})?|(\d{2,4})\b", "").Trim();
                     int? finalCatId = null;
@@ -353,6 +388,7 @@ namespace BIP_SMEMC.Controllers
                     {
                         finalCatId = utilitiesId; // Assign to Utilities
                     }
+
                     // --- HEURISTIC ENGINE ---
                     // --- PRIORITY 1: KEYWORD SEARCH (Gov, Bank, Food) ---
                     if (!finalCatId.HasValue)
@@ -379,8 +415,11 @@ namespace BIP_SMEMC.Controllers
                         else if (cleanFull.Contains("salary") || cleanFull.Contains("pay") || cleanFull.Contains("salaries"))
                             finalCatId = salariesWagesId;
                     }
-                    if (finalCatId.HasValue)
+                    if (finalCatId.HasValue && (dr > 0 || cr > 0))
                     {
+                        var category = cache.FirstOrDefault(c => c.Id == finalCatId);
+                        string transType = category?.Type ?? "Expense"; // Use actual Category type
+
                         matches.Add(new Dictionary<string, object> {
                             { "user_id", email.ToLower() },
                             { "date", transDate.ToString("yyyy-MM-dd") }, // FIX: String prevents loop
@@ -388,7 +427,7 @@ namespace BIP_SMEMC.Controllers
                             { "debit", ParseSafeDecimal(row.Cell(cols["debit"])) },
                             { "credit", ParseSafeDecimal(row.Cell(cols["credit"])) },
                             { "category_id", finalCatId.Value },
-                            { "type", "Expense" },
+                            { "type", transType },
                             { "tran_month", transDate.Month },
                             { "tran_year", transDate.Year }
                         });

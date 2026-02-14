@@ -233,5 +233,28 @@ namespace BIP_SMEMC.Services
                 PointsAwarded = progress.PointsAwarded
             };
         }
+
+        // Add this to LearningService.cs for dashboard controller view
+        public async Task<double> GetOverallCompletionAsync(string userId)
+        {
+            try
+            {
+                var topics = await GetTopicsAsync();
+                if (!topics.Any()) return 0;
+
+                // Count how many modules the user has passed
+                var progressRes = await _supabase.From<LearningProgress>()
+                    .Filter("user_id", Postgrest.Constants.Operator.Equals, userId)
+                    .Filter("passed", Postgrest.Constants.Operator.Equals, "true")
+                    .Get();
+
+                // Total possible = Topics * 3 (Beginner, Intermediate, Advanced)
+                double totalPossible = topics.Count * 3;
+                double totalPassed = progressRes.Models.Count;
+
+                return totalPossible > 0 ? Math.Round((totalPassed / totalPossible) * 100, 1) : 0;
+            }
+            catch { return 0; }
+        }
     }
 }
